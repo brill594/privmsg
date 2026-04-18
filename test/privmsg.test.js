@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  inferMimeType,
   deriveAccessKeyMaterial,
   decryptBytes,
   decryptJsonValue,
@@ -65,4 +66,8 @@ test("derives stable outer key material from local and server key shares", async
 
   assert.equal(first.byteLength, 32);
   assert.deepEqual(Array.from(first), Array.from(second));
+});
+
+test("infers pk8 mime type for generated private keys", () => {
+  assert.equal(inferMimeType("privmsg-x25519-private-key.pk8"), "application/pkcs8");
 });

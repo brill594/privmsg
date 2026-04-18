@@ -228,6 +228,8 @@ export function inferMimeType(filename) {
       return "text/plain";
     case "pdf":
       return "application/pdf";
+    case "pk8":
+      return "application/pkcs8";
     default:
       return "application/octet-stream";
   }

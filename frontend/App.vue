@@ -1216,7 +1216,7 @@ function clearPreview() {
                     class="hidden"
                     type="file"
                     multiple
-                    accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf"
+                    accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,.pk8,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf,application/pkcs8,application/octet-stream"
                     @change="onFileChange"
                   >
                   <Button variant="outline" type="button" @click="openFilePicker">

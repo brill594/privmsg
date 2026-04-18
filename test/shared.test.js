@@ -18,12 +18,15 @@ test("allows supported attachment types", () => {
   assert.equal(isAllowedAttachment({ name: "photo.png", type: "image/png" }), true);
   assert.equal(isAllowedAttachment({ name: "clip.mov", type: "video/quicktime" }), true);
   assert.equal(isAllowedAttachment({ name: "note.txt", type: "" }), true);
+  assert.equal(isAllowedAttachment({ name: "private-key.pk8", type: "application/pkcs8" }), true);
+  assert.equal(isAllowedAttachment({ name: "private-key.pk8", type: "application/octet-stream" }), true);
 });
 
 test("rejects unsupported attachment types", () => {
   assert.equal(isAllowedAttachment({ name: "script.js", type: "application/javascript" }), false);
   assert.equal(isAllowedAttachment({ name: "vector.svg", type: "image/svg+xml" }), false);
   assert.equal(isAllowedAttachment({ name: "archive.zip", type: "application/zip" }), false);
+  assert.equal(isAllowedAttachment({ name: "note.txt", type: "application/octet-stream" }), false);
 });
 
 test("computes preview types", () => {
@@ -31,6 +34,7 @@ test("computes preview types", () => {
   assert.equal(getPreviewKind({ name: "movie.webm", type: "video/webm" }), "video");
   assert.equal(getPreviewKind({ name: "doc.txt", type: "text/plain" }), "text");
   assert.equal(getPreviewKind({ name: "paper.pdf", type: "application/pdf" }), "pdf");
+  assert.equal(getPreviewKind({ name: "private-key.pk8", type: "application/pkcs8" }), "download");
 });
 
 test("clamps ttl to service bounds", () => {

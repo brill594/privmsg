@@ -20,7 +20,8 @@ export const ALLOWED_EXTENSIONS = new Set([
   "webm",
   "mov",
   "txt",
-  "pdf"
+  "pdf",
+  "pk8"
 ]);
 
 export const ALLOWED_MIME_TYPES = new Set([
@@ -32,8 +33,11 @@ export const ALLOWED_MIME_TYPES = new Set([
   "video/webm",
   "video/quicktime",
   "text/plain",
-  "application/pdf"
+  "application/pdf",
+  "application/pkcs8"
 ]);
+
+const OCTET_STREAM_COMPATIBLE_EXTENSIONS = new Set(["pk8"]);
 
 export function getFileExtension(filename) {
   if (typeof filename !== "string") {
@@ -52,7 +56,10 @@ export function isAllowedAttachment({ name, type = "" }) {
   const extension = getFileExtension(name);
   const normalizedType = String(type || "").toLowerCase();
   const extensionAllowed = ALLOWED_EXTENSIONS.has(extension);
-  const typeAllowed = !normalizedType || ALLOWED_MIME_TYPES.has(normalizedType);
+  const typeAllowed =
+    !normalizedType ||
+    ALLOWED_MIME_TYPES.has(normalizedType) ||
+    (normalizedType === "application/octet-stream" && OCTET_STREAM_COMPATIBLE_EXTENSIONS.has(extension));
   return extensionAllowed && typeAllowed;
 }
 

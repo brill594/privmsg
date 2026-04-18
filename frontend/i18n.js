@@ -174,7 +174,7 @@ export const messages = {
       preview: "预览",
       download: "下载",
       attachmentTypeFallback: "application/octet-stream",
-      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf"
+      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf / pk8"
     },
     policy: {
       title: "免责声明与使用守则",
@@ -199,7 +199,7 @@ export const messages = {
         {
           title: "安全边界",
           items: [
-            "附件总大小上限为 50MB，支持类型包括 jpg、png、webp、gif、mp4、webm、mov、txt、pdf。",
+            "附件总大小上限为 50MB，支持类型包括 jpg、png、webp、gif、mp4、webm、mov、txt、pdf、pk8。",
             "未读失效时间支持 1 小时到 7 天；访问次数支持 1 到 20 次。",
             "只有服务端发放一次解密授权时才会扣减访问次数；普通获取密文不会扣减。",
             "若在次数耗尽前链接被多人持有，多人都可能在额度内完成解密。"
@@ -346,7 +346,7 @@ export const messages = {
       preview: "Preview",
       download: "Download",
       attachmentTypeFallback: "application/octet-stream",
-      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf"
+      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf / pk8"
     },
     policy: {
       title: "Disclaimer & Usage Rules",
@@ -371,7 +371,7 @@ export const messages = {
         {
           title: "Security Boundaries",
           items: [
-            "Total attachment size is capped at 50MB. Supported types are jpg, png, webp, gif, mp4, webm, mov, txt, and pdf.",
+            "Total attachment size is capped at 50MB. Supported types are jpg, png, webp, gif, mp4, webm, mov, txt, pdf, and pk8.",
             "Unread expiration ranges from 1 hour to 7 days. Access count ranges from 1 to 20 reads.",
             "A read is only consumed when the server issues a decryption authorization. Plain ciphertext fetches do not consume reads.",
             "If multiple people hold the link before the read quota is exhausted, multiple recipients may decrypt it within the remaining quota."

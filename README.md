@@ -14,7 +14,7 @@
   - `POST /api/message/:id/access-key`
 - 附件总大小限制 `<= 50MB`
 - 发送端可设置最大访问次数，当前范围 `1 - 20`
-- 支持类型：`jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf`
+- 支持类型：`jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf` `pk8`
 - 消息读取端先拉取密文，再向服务端申请一次性解密授权；服务端下发 key share 前会原子扣减访问次数
 - 所有 API 响应都携带 `Cache-Control: no-store`
 - GitHub Actions CI / Deploy 工作流已接入
