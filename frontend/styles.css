@@ -1,37 +1,107 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
 :root {
-  color-scheme: light;
-  --page-ink: #f4dde8;
-  --page-base: #09070b;
+  --radius: 0.75rem;
+
+  /* Light mode - rose/pink palette */
+  --background: 330 25% 98%;
+  --foreground: 280 25% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 280 25% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 280 25% 12%;
+  --primary: 330 65% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 330 18% 93%;
+  --secondary-foreground: 280 20% 18%;
+  --muted: 330 12% 94%;
+  --muted-foreground: 280 8% 46%;
+  --accent: 330 22% 93%;
+  --accent-foreground: 280 25% 12%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 330 12% 89%;
+  --input: 330 12% 89%;
+  --ring: 330 65% 50%;
 }
 
-* {
-  box-sizing: border-box;
+.dark {
+  --background: 280 22% 4%;
+  --foreground: 330 55% 91%;
+  --card: 280 18% 9%;
+  --card-foreground: 330 55% 91%;
+  --popover: 280 18% 9%;
+  --popover-foreground: 330 55% 91%;
+  --primary: 330 80% 72%;
+  --primary-foreground: 315 30% 7%;
+  --secondary: 330 18% 15%;
+  --secondary-foreground: 330 55% 91%;
+  --muted: 280 12% 17%;
+  --muted-foreground: 330 15% 68%;
+  --accent: 330 25% 17%;
+  --accent-foreground: 330 100% 97%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 330 20% 16%;
+  --input: 330 20% 16%;
+  --ring: 330 80% 72%;
 }
 
-html,
-body,
-#app {
-  min-height: 100%;
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: theme(--color-border);
+  }
+
+  body {
+    background-color: theme(--color-background);
+    color: theme(--color-foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
 }
 
-html,
-body {
-  margin: 0;
+/* Transition for theme toggle */
+.fade-up-enter-active,
+.fade-up-leave-active {
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
 }
 
-body {
-  color: var(--page-ink);
-  font-family: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
-  background:
-    radial-gradient(circle at 12% 12%, rgba(177, 67, 117, 0.20), transparent 22rem),
-    radial-gradient(circle at 88% 10%, rgba(123, 69, 161, 0.14), transparent 18rem),
-    radial-gradient(circle at 50% 100%, rgba(190, 77, 122, 0.12), transparent 24rem),
-    linear-gradient(180deg, #070609 0%, #0d0a11 48%, #120d15 100%);
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
+.fade-up-enter-from,
+.fade-up-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }

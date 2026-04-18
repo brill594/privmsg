@@ -20,6 +20,11 @@ import {
 } from "./lib/privmsg.js";
 import { detectInitialLocale, messages, persistLocale } from "./i18n.js";
 
+import Button from "./components/ui/Button.vue";
+import ThemeToggle from "./components/ThemeToggle.vue";
+
+const THEME_KEY = "privmsg.theme";
+
 const policyMode = window.location.pathname === "/policy" || window.location.pathname === "/policy/";
 const readerMode = window.location.pathname.startsWith("/m/");
 
@@ -58,6 +63,31 @@ const preview = reactive({
   visible: false
 });
 
+/* ---------- theme ---------- */
+
+function getInitialTheme() {
+  if (typeof window === "undefined") return true;
+  const stored = localStorage.getItem(THEME_KEY);
+  if (stored === "light") return false;
+  if (stored === "dark") return true;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+const isDark = ref(getInitialTheme());
+applyTheme();
+
+function toggleTheme() {
+  isDark.value = !isDark.value;
+  localStorage.setItem(THEME_KEY, isDark.value ? "dark" : "light");
+  applyTheme();
+}
+
+function applyTheme() {
+  document.documentElement.classList.toggle("dark", isDark.value);
+}
+
+/* ---------- computed ---------- */
+
 const selectedTotalSize = computed(() => composer.files.reduce((sum, file) => sum + file.size, 0));
 const selectedFileSummary = computed(() => {
   if (!composer.files.length) {
@@ -79,6 +109,20 @@ const readerMessage = computed(() => {
 });
 const footerHref = computed(() => (policyMode ? "/" : "/policy"));
 const footerLabel = computed(() => (policyMode ? text.value.footer.home : text.value.footer.legal));
+
+/* ---------- status tone classes ---------- */
+
+function toneClasses(tone) {
+  const map = {
+    progress: "bg-primary/10 text-primary border-primary/20",
+    success: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
+    warning: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
+    error: "bg-destructive/10 text-destructive border-destructive/20"
+  };
+  return map[tone] || map.progress;
+}
+
+/* ---------- lifecycle ---------- */
 
 watch(
   locale,
@@ -106,6 +150,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearPreview();
 });
+
+/* ---------- helpers ---------- */
 
 function setComposerStatus(message, tone = "progress") {
   composerStatus.message = message;
@@ -349,17 +395,6 @@ async function previewAttachment(attachment) {
   preview.activeUrl = URL.createObjectURL(attachment.blob);
   preview.kind = previewKind;
   preview.visible = true;
-  if (previewKind === "image") {
-    return;
-  }
-
-  if (previewKind === "video") {
-    return;
-  }
-
-  if (previewKind === "pdf") {
-    return;
-  }
 }
 
 function downloadAttachment(attachment) {
@@ -384,689 +419,282 @@ function clearPreview() {
 </script>
 
 <template>
-  <main class="page-shell">
-    <div class="ambient ambient-primary"></div>
-    <div class="ambient ambient-secondary"></div>
-
-    <header class="topbar">
-      <a class="brand" href="/">{{ text.appName }}</a>
-
-      <div class="locale-switch" role="group" aria-label="language">
-        <button
-          v-for="option in ['zh', 'en']"
-          :key="option"
-          class="locale-button"
-          :class="{ active: locale === option }"
-          type="button"
-          @click="switchLocale(option)"
+  <div class="min-h-screen bg-background text-foreground">
+    <div class="mx-auto max-w-5xl px-4 py-7 pb-10 sm:px-6">
+      <!-- Header -->
+      <header class="mb-6 flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <a
+          href="/"
+          class="text-xl font-bold tracking-wider text-primary no-underline transition-colors hover:text-primary/80"
         >
-          {{ text.localeOptions[option] }}
-        </button>
-      </div>
-    </header>
+          {{ text.appName }}
+        </a>
 
-    <section v-if="policyMode" class="workspace-single">
-      <article class="workspace-card policy-card">
-        <div class="section-head">
-          <h1>{{ text.policy.title }}</h1>
-          <p class="section-copy">{{ text.policy.intro }}</p>
+        <div class="flex items-center gap-2">
+          <ThemeToggle :is-dark="isDark" @toggle="toggleTheme" />
+
+          <div
+            class="inline-flex gap-1 rounded-full border border-border bg-secondary/50 p-1.5"
+            role="group"
+            aria-label="language"
+          >
+            <button
+              v-for="option in ['zh', 'en']"
+              :key="option"
+              :class="[
+                'cursor-pointer rounded-full border-none px-3.5 py-1.5 text-sm font-medium transition-colors',
+                locale === option
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-transparent text-muted-foreground hover:text-foreground'
+              ]"
+              type="button"
+              @click="switchLocale(option)"
+            >
+              {{ text.localeOptions[option] }}
+            </button>
+          </div>
         </div>
+      </header>
 
-        <section v-for="section in text.policy.sections" :key="section.title" class="policy-section">
-          <h2>{{ section.title }}</h2>
-          <ul class="notice-list">
-            <li v-for="item in section.items" :key="item">{{ item }}</li>
-          </ul>
-        </section>
-      </article>
-    </section>
-
-    <section v-else-if="readerMode" class="reader-grid">
-      <article class="workspace-card reader-card">
-        <div class="section-head">
-          <h1>{{ text.reader.title }}</h1>
-        </div>
-
-        <div class="status-banner" :class="`tone-${reader.statusTone}`">
-          {{ reader.statusMessage }}
-        </div>
-
-        <section class="panel-card">
-          <h2>{{ text.reader.bodyTitle }}</h2>
-          <pre class="message-output">{{ readerMessage }}</pre>
-        </section>
-
-        <section class="panel-card">
-          <div class="panel-head">
-            <h2>{{ text.reader.attachmentsTitle }}</h2>
-            <span class="panel-meta">{{ readerSummary }}</span>
+      <!-- Policy View -->
+      <section v-if="policyMode" class="mx-auto max-w-3xl">
+        <div class="space-y-6 rounded-2xl border border-border bg-card p-7 shadow-lg">
+          <div>
+            <h1 class="text-3xl font-bold text-card-foreground">{{ text.policy.title }}</h1>
+            <p class="mt-3 leading-relaxed text-muted-foreground">{{ text.policy.intro }}</p>
           </div>
 
-          <div v-if="reader.attachments.length" class="attachment-list">
-            <article v-for="attachment in reader.attachments" :key="`${attachment.index}-${attachment.name}`" class="attachment-card">
-              <div>
-                <p class="attachment-title">{{ attachment.name }}</p>
-                <p class="attachment-meta">
-                  {{ attachment.type || text.common.attachmentTypeFallback }} · {{ formatBytes(attachment.size) }}
-                </p>
-              </div>
-
-              <div class="attachment-actions">
-                <button
-                  v-if="getPreviewKind(attachment) !== 'download'"
-                  class="secondary-button"
-                  type="button"
-                  @click="previewAttachment(attachment)"
-                >
-                  {{ text.common.preview }}
-                </button>
-                <button class="secondary-button" type="button" @click="downloadAttachment(attachment)">
-                  {{ text.common.download }}
-                </button>
-              </div>
-            </article>
-          </div>
-          <p v-else class="muted">{{ text.reader.noAttachments }}</p>
-        </section>
-      </article>
-
-      <article class="workspace-card preview-card">
-        <div class="section-head">
-          <h1>{{ text.reader.previewTitle }}</h1>
-        </div>
-
-        <div v-if="!preview.visible" class="preview-placeholder">
-          {{ previewPlaceholder }}
-        </div>
-        <div v-else-if="preview.kind === 'text'" class="preview-surface">
-          <pre class="preview-text">{{ preview.textContent }}</pre>
-        </div>
-        <div v-else-if="preview.kind === 'image'" class="preview-surface">
-          <img class="preview-media" :src="preview.activeUrl" alt="attachment preview">
-        </div>
-        <div v-else-if="preview.kind === 'video'" class="preview-surface">
-          <video class="preview-media" :src="preview.activeUrl" controls playsinline></video>
-        </div>
-        <iframe
-          v-else-if="preview.kind === 'pdf'"
-          class="preview-frame"
-          :src="preview.activeUrl"
-          title="attachment preview"
-          sandbox="allow-downloads allow-same-origin"
-        ></iframe>
-      </article>
-    </section>
-
-    <section v-else class="workspace-single">
-      <article class="workspace-card composer-card">
-        <div class="section-head">
-          <h1>{{ text.composer.title }}</h1>
-        </div>
-
-        <form class="composer-form" @submit.prevent="createMessage">
-          <label class="field">
-            <span>{{ text.composer.bodyLabel }}</span>
-            <textarea
-              v-model="composer.message"
-              rows="8"
-              maxlength="100000"
-              :placeholder="text.composer.bodyPlaceholder"
-            ></textarea>
-          </label>
-
-          <div class="field-grid">
-            <label class="field">
-              <span>{{ text.composer.attachmentsLabel }}</span>
-              <div class="file-picker">
-                <input
-                  ref="fileInput"
-                  class="file-input"
-                  type="file"
-                  multiple
-                  accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf"
-                  @change="onFileChange"
-                >
-                <button class="file-picker-button" type="button" @click="openFilePicker">
-                  {{ text.composer.chooseFiles }}
-                </button>
-                <p class="file-picker-text">{{ selectedFileSummary }}</p>
-              </div>
-            </label>
-
-            <label class="field">
-              <span>{{ text.composer.expiresLabel }}</span>
-              <select v-model="composer.ttlSeconds">
-                <option v-for="option in ttlOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>{{ text.composer.maxReadsLabel }}</span>
-              <input
-                v-model.number="composer.maxReads"
-                type="number"
-                min="1"
-                :max="MAX_READ_LIMIT"
-                step="1"
-                inputmode="numeric"
-                @blur="normalizeMaxReads"
-              >
-            </label>
-          </div>
-
-          <div class="summary-card">
-            <span>{{ text.composer.summaryLabel }}</span>
-            <strong>{{ selectedFileSummary }}</strong>
-          </div>
-
-          <div class="status-banner" :class="`tone-${composerStatus.tone}`">
-            {{ composerStatus.message }}
-          </div>
-
-          <button class="primary-button" type="submit" :disabled="isCreating">
-            {{ isCreating ? text.composer.creating : text.composer.create }}
-          </button>
-        </form>
-
-        <transition name="fade-up">
-          <section v-if="shareLink" class="share-card">
-            <div class="panel-head">
-              <h2>{{ text.composer.shareTitle }}</h2>
-              <button class="secondary-button" type="button" @click="copyShareLink">
-                {{ text.composer.copyLink }}
-              </button>
-            </div>
-            <input class="share-input" type="text" :value="shareLink" readonly aria-label="share-link">
+          <section
+            v-for="section in text.policy.sections"
+            :key="section.title"
+            class="space-y-4 rounded-xl border border-border bg-muted/30 p-6"
+          >
+            <h2 class="text-lg font-semibold text-card-foreground">{{ section.title }}</h2>
+            <ul class="list-disc space-y-2.5 pl-5 leading-relaxed text-muted-foreground">
+              <li v-for="item in section.items" :key="item">{{ item }}</li>
+            </ul>
           </section>
-        </transition>
-      </article>
-    </section>
+        </div>
+      </section>
 
-    <footer class="page-footer">
-      <a class="footer-link" :href="footerHref">{{ footerLabel }}</a>
-    </footer>
-  </main>
+      <!-- Reader View -->
+      <section v-else-if="readerMode" class="grid gap-5 lg:grid-cols-[1.35fr_0.75fr]">
+        <!-- Left: reader card -->
+        <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
+          <h1 class="text-3xl font-bold text-card-foreground">{{ text.reader.title }}</h1>
+
+          <!-- Status banner -->
+          <div
+            :class="[toneClasses(reader.statusTone), 'rounded-xl border px-4 py-3.5 text-sm font-semibold']"
+          >
+            {{ reader.statusMessage }}
+          </div>
+
+          <!-- Message body -->
+          <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
+            <h2 class="text-base font-semibold text-card-foreground">{{ text.reader.bodyTitle }}</h2>
+            <pre class="min-h-[180px] whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-4 font-mono text-sm leading-relaxed text-foreground">{{ readerMessage }}</pre>
+          </div>
+
+          <!-- Attachments -->
+          <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
+            <div class="flex items-center justify-between gap-4">
+              <h2 class="text-base font-semibold text-card-foreground">{{ text.reader.attachmentsTitle }}</h2>
+              <span class="text-sm text-muted-foreground">{{ readerSummary }}</span>
+            </div>
+
+            <div v-if="reader.attachments.length" class="space-y-3">
+              <div
+                v-for="attachment in reader.attachments"
+                :key="`${attachment.index}-${attachment.name}`"
+                class="flex flex-col items-stretch gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+              >
+                <div>
+                  <p class="font-semibold text-foreground">{{ attachment.name }}</p>
+                  <p class="text-sm text-muted-foreground">
+                    {{ attachment.type || text.common.attachmentTypeFallback }} &middot; {{ formatBytes(attachment.size) }}
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-2.5">
+                  <Button
+                    v-if="getPreviewKind(attachment) !== 'download'"
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    @click="previewAttachment(attachment)"
+                  >
+                    {{ text.common.preview }}
+                  </Button>
+                  <Button variant="secondary" size="sm" type="button" @click="downloadAttachment(attachment)">
+                    {{ text.common.download }}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <p v-else class="text-muted-foreground">{{ text.reader.noAttachments }}</p>
+          </div>
+        </div>
+
+        <!-- Right: preview card -->
+        <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
+          <h1 class="text-xl font-bold text-card-foreground">{{ text.reader.previewTitle }}</h1>
+
+          <div
+            v-if="!preview.visible"
+            class="grid min-h-[520px] place-items-center rounded-xl border border-border bg-muted/30 text-muted-foreground"
+          >
+            {{ previewPlaceholder }}
+          </div>
+          <div
+            v-else-if="preview.kind === 'text'"
+            class="grid min-h-[520px] place-items-start overflow-auto rounded-xl border border-border p-4"
+          >
+            <pre class="m-0 w-full min-h-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ preview.textContent }}</pre>
+          </div>
+          <div
+            v-else-if="preview.kind === 'image'"
+            class="grid min-h-[520px] place-items-center overflow-auto rounded-xl border border-border p-4"
+          >
+            <img class="block max-h-[480px] max-w-full rounded border-0 bg-muted" :src="preview.activeUrl" alt="attachment preview">
+          </div>
+          <div
+            v-else-if="preview.kind === 'video'"
+            class="grid min-h-[520px] place-items-center overflow-auto rounded-xl border border-border p-4"
+          >
+            <video class="block max-h-[480px] max-w-full rounded border-0 bg-muted" :src="preview.activeUrl" controls playsinline></video>
+          </div>
+          <iframe
+            v-else-if="preview.kind === 'pdf'"
+            class="min-h-[520px] w-full rounded-xl border border-border bg-muted/20"
+            :src="preview.activeUrl"
+            title="attachment preview"
+            sandbox="allow-downloads allow-same-origin"
+          ></iframe>
+        </div>
+      </section>
+
+      <!-- Composer View -->
+      <section v-else class="mx-auto max-w-3xl">
+        <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
+          <h1 class="text-3xl font-bold text-card-foreground">{{ text.composer.title }}</h1>
+
+          <form class="space-y-5" @submit.prevent="createMessage">
+            <!-- Message body -->
+            <div class="space-y-2.5">
+              <label class="text-sm font-semibold text-foreground">{{ text.composer.bodyLabel }}</label>
+              <textarea
+                v-model="composer.message"
+                rows="8"
+                maxlength="100000"
+                :placeholder="text.composer.bodyPlaceholder"
+                class="min-h-[190px] w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              ></textarea>
+            </div>
+
+            <!-- Field grid -->
+            <div class="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr]">
+              <!-- File picker -->
+              <div class="space-y-2.5">
+                <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
+                <div class="flex min-h-[76px] items-center gap-3.5 rounded-xl border border-input bg-muted/30 p-4">
+                  <input
+                    ref="fileInput"
+                    class="hidden"
+                    type="file"
+                    multiple
+                    accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf"
+                    @change="onFileChange"
+                  >
+                  <Button variant="outline" type="button" @click="openFilePicker">
+                    {{ text.composer.chooseFiles }}
+                  </Button>
+                  <p class="m-0 text-sm leading-relaxed text-muted-foreground">{{ selectedFileSummary }}</p>
+                </div>
+              </div>
+
+              <!-- TTL select -->
+              <div class="space-y-2.5">
+                <label class="text-sm font-semibold text-foreground">{{ text.composer.expiresLabel }}</label>
+                <select
+                  v-model="composer.ttlSeconds"
+                  class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option
+                    v-for="option in ttlOptions"
+                    :key="option.value"
+                    :value="option.value"
+                    class="bg-card text-card-foreground"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+
+              <!-- Max reads -->
+              <div class="space-y-2.5">
+                <label class="text-sm font-semibold text-foreground">{{ text.composer.maxReadsLabel }}</label>
+                <input
+                  v-model.number="composer.maxReads"
+                  type="number"
+                  min="1"
+                  :max="MAX_READ_LIMIT"
+                  step="1"
+                  inputmode="numeric"
+                  class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  @blur="normalizeMaxReads"
+                >
+              </div>
+            </div>
+
+            <!-- Attachment summary -->
+            <div class="space-y-1 rounded-xl border border-border bg-muted/30 p-4">
+              <span class="text-sm font-semibold text-foreground">{{ text.composer.summaryLabel }}</span>
+              <p class="m-0 font-medium text-foreground">{{ selectedFileSummary }}</p>
+            </div>
+
+            <!-- Status banner -->
+            <div
+              :class="[toneClasses(composerStatus.tone), 'rounded-xl border px-4 py-3.5 text-sm font-semibold']"
+            >
+              {{ composerStatus.message }}
+            </div>
+
+            <!-- Submit -->
+            <Button type="submit" :disabled="isCreating" class="w-full">
+              {{ isCreating ? text.composer.creating : text.composer.create }}
+            </Button>
+          </form>
+
+          <!-- Share link -->
+          <transition name="fade-up">
+            <div v-if="shareLink" class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
+              <div class="flex items-center justify-between gap-4">
+                <h2 class="text-base font-semibold text-card-foreground">{{ text.composer.shareTitle }}</h2>
+                <Button variant="secondary" size="sm" type="button" @click="copyShareLink">
+                  {{ text.composer.copyLink }}
+                </Button>
+              </div>
+              <input
+                type="text"
+                :value="shareLink"
+                readonly
+                aria-label="share-link"
+                class="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+            </div>
+          </transition>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="mt-6 flex justify-center">
+        <a
+          :href="footerHref"
+          class="rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {{ footerLabel }}
+        </a>
+      </footer>
+    </div>
+  </div>
 </template>
-
-<style>
-.page-shell {
-  position: relative;
-  width: min(1180px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 28px 0 40px;
-  color: #f4dde8;
-}
-
-.ambient {
-  position: fixed;
-  border-radius: 999px;
-  filter: blur(44px);
-  pointer-events: none;
-  opacity: 0.28;
-}
-
-.ambient-primary {
-  width: 26rem;
-  height: 26rem;
-  top: -6rem;
-  left: -8rem;
-  background: rgba(187, 79, 131, 0.55);
-}
-
-.ambient-secondary {
-  width: 24rem;
-  height: 24rem;
-  right: -6rem;
-  bottom: 10rem;
-  background: rgba(110, 57, 127, 0.42);
-}
-
-.topbar,
-.panel-head,
-.attachment-card,
-.page-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.topbar {
-  margin-bottom: 20px;
-}
-
-.brand {
-  color: #ffe1ec;
-  text-decoration: none;
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.locale-switch {
-  display: inline-flex;
-  gap: 8px;
-  padding: 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 189, 220, 0.14);
-}
-
-.locale-button,
-.primary-button,
-.secondary-button,
-.footer-link,
-.file-picker-button {
-  border: none;
-  border-radius: 999px;
-  font: inherit;
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    transform 150ms ease,
-    opacity 150ms ease,
-    background-color 150ms ease;
-}
-
-.locale-button {
-  padding: 8px 14px;
-  background: transparent;
-  color: #e8c6d5;
-}
-
-.locale-button.active {
-  background: rgba(255, 153, 204, 0.16);
-  color: #fff0f7;
-}
-
-.workspace-single,
-.reader-grid {
-  display: grid;
-  gap: 20px;
-}
-
-.reader-grid {
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.75fr);
-}
-
-.workspace-card {
-  position: relative;
-  overflow: hidden;
-  padding: 28px;
-  border-radius: 28px;
-  border: 1px solid rgba(255, 190, 223, 0.10);
-  background:
-    linear-gradient(180deg, rgba(28, 21, 31, 0.96) 0%, rgba(18, 14, 21, 0.94) 100%);
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-
-.workspace-card::after {
-  content: "";
-  position: absolute;
-  inset: auto -10% -36% auto;
-  width: 18rem;
-  height: 18rem;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(177, 67, 117, 0.18) 0%, rgba(177, 67, 117, 0) 72%);
-  pointer-events: none;
-}
-
-.policy-card {
-  display: grid;
-  gap: 26px;
-}
-
-.section-head,
-.composer-form,
-.share-card,
-.panel-card,
-.policy-section {
-  display: grid;
-  gap: 18px;
-}
-
-.section-head h1,
-.panel-card h2,
-.policy-section h2 {
-  margin: 0;
-  color: #fff2f8;
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  line-height: 1.02;
-}
-
-.section-head h1 {
-  font-size: clamp(2rem, 4vw, 3.1rem);
-}
-
-.section-copy,
-.muted,
-.attachment-meta,
-.notice-list,
-.panel-meta {
-  margin: 0;
-  color: #bfa4b1;
-  line-height: 1.7;
-}
-
-.composer-form {
-  margin-top: 10px;
-}
-
-.field-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(180px, 0.7fr));
-  gap: 16px;
-}
-
-.field {
-  display: grid;
-  gap: 10px;
-}
-
-.field span,
-.summary-card span,
-.attachment-title {
-  color: #f8ddea;
-  font-weight: 700;
-}
-
-textarea,
-input[type="number"],
-select,
-.share-input {
-  width: 100%;
-  border: 1px solid rgba(255, 190, 223, 0.12);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #f8ddea;
-  font: inherit;
-}
-
-textarea,
-input[type="number"],
-select,
-.share-input {
-  padding: 14px 16px;
-}
-
-textarea {
-  min-height: 190px;
-  resize: vertical;
-}
-
-.file-input {
-  display: none;
-}
-
-.file-picker {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 76px;
-  padding: 14px 16px;
-  border-radius: 24px;
-  border: 1px solid rgba(255, 190, 223, 0.12);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.03) 100%);
-}
-
-.file-picker-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 18px;
-  border: 1px solid rgba(255, 190, 223, 0.18);
-  border-radius: 16px;
-  color: #fff2f8;
-  background:
-    linear-gradient(135deg, rgba(255, 176, 214, 0.22) 0%, rgba(194, 92, 149, 0.26) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 238, 246, 0.18),
-    0 12px 24px rgba(0, 0, 0, 0.18);
-}
-
-.file-picker-text {
-  margin: 0;
-  color: #c9aebc;
-  line-height: 1.6;
-}
-
-.summary-card,
-.status-banner,
-.share-card,
-.panel-card,
-.preview-placeholder,
-.preview-frame,
-.attachment-card,
-.policy-section {
-  border-radius: 22px;
-  border: 1px solid rgba(255, 190, 223, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.summary-card,
-.share-card,
-.panel-card,
-.policy-section {
-  padding: 18px;
-}
-
-.policy-section {
-  gap: 20px;
-  padding: 24px;
-}
-
-.summary-card {
-  display: grid;
-  gap: 8px;
-}
-
-.summary-card strong {
-  color: #fff3f8;
-  font-size: 1rem;
-}
-
-.status-banner {
-  padding: 14px 16px;
-  font-weight: 600;
-}
-
-.tone-progress {
-  color: #f0cadb;
-  background: rgba(255, 168, 211, 0.08);
-}
-
-.tone-success {
-  color: #ffd7e6;
-  background: rgba(198, 93, 147, 0.14);
-}
-
-.tone-warning {
-  color: #f7dcb6;
-  background: rgba(182, 121, 45, 0.16);
-}
-
-.tone-error {
-  color: #ffc5d8;
-  background: rgba(177, 67, 117, 0.18);
-}
-
-.primary-button,
-.secondary-button {
-  padding: 14px 18px;
-  font-weight: 700;
-}
-
-.primary-button {
-  color: #160d14;
-  background: linear-gradient(135deg, #ffb2d6 0%, #ea7eb3 100%);
-}
-
-.secondary-button {
-  color: #ffe2ef;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.primary-button:hover,
-.secondary-button:hover,
-.file-picker-button:hover,
-.locale-button:hover,
-.footer-link:hover {
-  transform: translateY(-1px);
-}
-
-.primary-button:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
-.message-output {
-  margin: 0;
-  min-height: 180px;
-  padding: 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.03);
-  color: #fff1f7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: 14px/1.65 "SF Mono", Menlo, monospace;
-}
-
-.attachment-list {
-  display: grid;
-  gap: 12px;
-}
-
-.attachment-card {
-  padding: 16px 18px;
-  border-radius: 18px;
-}
-
-.attachment-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.preview-placeholder,
-.preview-frame,
-.preview-surface {
-  width: 100%;
-  min-height: 520px;
-}
-
-.preview-placeholder {
-  display: grid;
-  place-items: center;
-  color: #cbb0be;
-}
-
-.preview-surface {
-  display: grid;
-  place-items: center;
-  overflow: auto;
-  padding: 18px;
-  box-sizing: border-box;
-}
-
-.preview-text {
-  margin: 0;
-  width: 100%;
-  min-height: 100%;
-  color: #fff1f7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: 14px/1.65 "SF Mono", Menlo, monospace;
-}
-
-.preview-media {
-  display: block;
-  max-width: 100%;
-  max-height: 480px;
-  border: 0;
-  background: #0f0c13;
-}
-
-.preview-frame {
-  border: 1px solid rgba(255, 190, 223, 0.10);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.notice-list {
-  display: grid;
-  gap: 10px;
-  padding-left: 18px;
-}
-
-.page-footer {
-  margin-top: 22px;
-  justify-content: center;
-}
-
-.footer-link {
-  padding: 12px 18px;
-  color: #ffddeb;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 190, 223, 0.10);
-}
-
-.fade-up-enter-active,
-.fade-up-leave-active {
-  transition:
-    opacity 220ms ease,
-    transform 220ms ease;
-}
-
-.fade-up-enter-from,
-.fade-up-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-@media (max-width: 960px) {
-  .reader-grid,
-  .field-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .page-shell {
-    width: min(100% - 20px, 1180px);
-    padding-top: 18px;
-  }
-
-  .workspace-card {
-    padding: 22px;
-    border-radius: 24px;
-  }
-
-  .policy-card {
-    gap: 20px;
-  }
-
-  .policy-section {
-    padding: 20px;
-  }
-
-  .topbar,
-  .panel-head,
-  .attachment-card {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .file-picker {
-    align-items: stretch;
-  }
-
-  .attachment-actions {
-    justify-content: flex-start;
-  }
-}
-</style>

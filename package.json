@@ -23,6 +23,12 @@
     "github:secrets:sync": "node scripts/github-secrets.mjs sync"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^1.0.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.2",
     "vue": "3.5.32"
   },
   "devDependencies": {
