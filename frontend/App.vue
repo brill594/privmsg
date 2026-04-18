@@ -41,25 +41,30 @@ const composer = reactive({
 
 const composerStatus = reactive({
   message: "",
-  tone: "progress"
+  tone: "progress",
+  renderer: null
 });
 
 const shareLink = ref("");
 const isCreating = ref(false);
 const fileInput = ref(null);
+const isPreviewExpanded = ref(false);
 
 const reader = reactive({
   statusMessage: "",
   statusTone: "progress",
+  statusRenderer: null,
   loaded: false,
   message: "",
+  messageRenderer: null,
   attachments: []
 });
 
 const preview = reactive({
   activeUrl: "",
   kind: "",
-  textContent: "",
+  name: "",
+  sourceText: "",
   visible: false
 });
 
@@ -96,17 +101,32 @@ const selectedFileSummary = computed(() => {
 
   return text.value.composer.selectedFiles(composer.files.length, formatBytes(selectedTotalSize.value));
 });
+const composerStatusMessage = computed(() => resolveLocalizedText(composerStatus.message, composerStatus.renderer));
 const previewPlaceholder = computed(() => text.value.reader.previewPlaceholder);
 const readerSummary = computed(() =>
   reader.attachments.length ? text.value.reader.summary(reader.attachments.length) : text.value.reader.noAttachments
 );
+const hasExpandablePreview = computed(() => preview.visible && ["text", "image", "video", "pdf"].includes(preview.kind));
+const readerStatusMessage = computed(() => resolveLocalizedText(reader.statusMessage, reader.statusRenderer));
 const readerMessage = computed(() => {
   if (!reader.loaded) {
     return text.value.reader.waitingBody;
   }
 
-  return reader.message || text.value.reader.emptyBody;
+  return resolveLocalizedText(reader.message, reader.messageRenderer) || text.value.reader.emptyBody;
 });
+const previewTextContent = computed(() => {
+  if (preview.kind !== "text") {
+    return "";
+  }
+
+  if (preview.sourceText.length > 200000) {
+    return `${preview.sourceText.slice(0, 200000)}\n\n${text.value.reader.previewTruncated}`;
+  }
+
+  return preview.sourceText;
+});
+const previewDialogTitle = computed(() => preview.name || text.value.reader.previewTitle);
 const footerHref = computed(() => (policyMode ? "/" : "/policy"));
 const footerLabel = computed(() => (policyMode ? text.value.footer.home : text.value.footer.legal));
 
@@ -122,6 +142,16 @@ function toneClasses(tone) {
   return map[tone] || map.progress;
 }
 
+function resolveLocalizedText(message, renderer) {
+  return typeof renderer === "function" ? renderer(text.value) : message;
+}
+
+function createLocalizedError(renderer) {
+  const error = new Error("");
+  error.localizedRenderer = renderer;
+  return error;
+}
+
 /* ---------- lifecycle ---------- */
 
 watch(
@@ -130,41 +160,81 @@ watch(
     persistLocale(locale.value);
     document.documentElement.lang = locale.value === "zh" ? "zh-CN" : "en";
 
-    if (!readerMode && !policyMode && !isCreating.value && !shareLink.value) {
-      setComposerStatus(text.value.composer.initialStatus, "progress");
+    if (
+      !readerMode &&
+      !policyMode &&
+      !isCreating.value &&
+      !shareLink.value &&
+      !composerStatus.message &&
+      !composerStatus.renderer
+    ) {
+      setComposerStatus((currentText) => currentText.composer.initialStatus, "progress");
     }
 
-    if (readerMode && !reader.loaded) {
-      setReaderStatus(text.value.reader.initialStatus, "progress");
+    if (readerMode && !reader.loaded && !reader.statusMessage && !reader.statusRenderer) {
+      setReaderStatus((currentText) => currentText.reader.initialStatus, "progress");
     }
   },
   { immediate: true }
 );
 
+watch(isPreviewExpanded, (expanded) => {
+  if (typeof document !== "undefined") {
+    document.body.style.overflow = expanded ? "hidden" : "";
+  }
+});
+
 onMounted(() => {
+  window.addEventListener("keydown", handleWindowKeydown);
+
   if (readerMode) {
     void loadMessage();
   }
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleWindowKeydown);
+  document.body.style.overflow = "";
   clearPreview();
 });
 
 /* ---------- helpers ---------- */
 
-function setComposerStatus(message, tone = "progress") {
-  composerStatus.message = message;
+function setComposerStatus(messageOrRenderer, tone = "progress") {
+  composerStatus.message = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
   composerStatus.tone = tone;
+  composerStatus.renderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
 }
 
-function setReaderStatus(message, tone = "progress") {
-  reader.statusMessage = message;
+function setReaderStatus(messageOrRenderer, tone = "progress") {
+  reader.statusMessage = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
   reader.statusTone = tone;
+  reader.statusRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
+}
+
+function setReaderMessage(messageOrRenderer = "") {
+  reader.message = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
+  reader.messageRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
 }
 
 function switchLocale(nextLocale) {
   locale.value = nextLocale;
+}
+
+function openExpandedPreview() {
+  if (hasExpandablePreview.value) {
+    isPreviewExpanded.value = true;
+  }
+}
+
+function closeExpandedPreview() {
+  isPreviewExpanded.value = false;
+}
+
+function handleWindowKeydown(event) {
+  if (event.key === "Escape" && isPreviewExpanded.value) {
+    closeExpandedPreview();
+  }
 }
 
 function onFileChange(event) {
@@ -193,20 +263,21 @@ async function createMessage() {
     const messageId = generateOpaqueId();
     const masterKeyBytes = crypto.getRandomValues(new Uint8Array(32));
     const maxReads = clampReadLimit(composer.maxReads);
+    const totalFiles = composer.files.length;
     const masterKey = btoa(String.fromCharCode(...masterKeyBytes))
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replaceAll("=", "");
 
-    setComposerStatus(text.value.composer.encryptMessage);
+    setComposerStatus((currentText) => currentText.composer.encryptMessage);
 
     const encryptedAttachments = [];
     let totalSize = 0;
 
-    for (let index = 0; index < composer.files.length; index += 1) {
+    for (let index = 0; index < totalFiles; index += 1) {
       const file = composer.files[index];
       totalSize += file.size;
-      setComposerStatus(text.value.composer.encryptAttachment(index, composer.files.length, file.name));
+      setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
       encryptedAttachments.push(await encryptAttachment(file, index, masterKeyBytes, messageId));
     }
 
@@ -240,7 +311,7 @@ async function createMessage() {
       formData.append(`file-${attachment.index}`, attachment.encryptedBlob, `${attachment.index}.bin`);
     }
 
-    setComposerStatus(text.value.composer.uploading);
+    setComposerStatus((currentText) => currentText.composer.uploading);
 
     const response = await fetch("/api/create", {
       method: "POST",
@@ -249,13 +320,16 @@ async function createMessage() {
 
     const result = await response.json();
     if (!response.ok) {
-      throw new Error(result.message || "Create failed");
+      if (result.message) {
+        throw new Error(result.message);
+      }
+      throw createLocalizedError((currentText) => currentText.composer.errors.createFailed);
     }
 
     shareLink.value = `${window.location.origin}/m/${messageId}#${masterKey}`;
-    setComposerStatus(text.value.composer.created(maxReads), "success");
+    setComposerStatus((currentText) => currentText.composer.created(maxReads), "success");
   } catch (error) {
-    setComposerStatus(error.message || "Create failed", "error");
+    setComposerStatus(error.localizedRenderer || error.message || ((currentText) => currentText.composer.errors.createFailed), "error");
   } finally {
     isCreating.value = false;
   }
@@ -268,14 +342,14 @@ async function loadMessage() {
     const masterKey = window.location.hash.slice(1);
 
     if (!messageId) {
-      throw new Error("Missing message id");
+      throw createLocalizedError((currentText) => currentText.reader.errors.missingMessageId);
     }
 
     if (!masterKey) {
-      throw new Error("Missing decryption key");
+      throw createLocalizedError((currentText) => currentText.reader.errors.missingDecryptionKey);
     }
 
-    setReaderStatus(text.value.reader.fetching);
+    setReaderStatus((currentText) => currentText.reader.fetching);
 
     const messageResponse = await fetch(`/api/message/${messageId}`, {
       headers: {
@@ -285,10 +359,13 @@ async function loadMessage() {
 
     const envelope = await messageResponse.json();
     if (!messageResponse.ok) {
-      throw new Error(envelope.message || "Read failed");
+      if (envelope.message) {
+        throw new Error(envelope.message);
+      }
+      throw createLocalizedError((currentText) => currentText.reader.errors.readFailed);
     }
 
-    setReaderStatus(text.value.reader.decryptingMessage);
+    setReaderStatus((currentText) => currentText.reader.decryptingMessage);
 
     const masterKeyBytes = base64UrlDecode(masterKey);
     const payloadKey = await deriveAesKey(masterKeyBytes, messageId, "payload", ["decrypt"]);
@@ -300,15 +377,18 @@ async function loadMessage() {
     for (const attachment of payload.attachments || []) {
       const attachmentEnvelope = attachmentEnvelopes.get(attachment.index);
       if (!attachmentEnvelope) {
-        throw new Error(`Missing encrypted envelope for attachment ${attachment.index}`);
+        throw createLocalizedError((currentText) => currentText.reader.errors.missingAttachmentEnvelope(attachment.index));
       }
 
-      setReaderStatus(text.value.reader.decryptingAttachment(attachment.name));
+      setReaderStatus((currentText) => currentText.reader.decryptingAttachment(attachment.name));
 
       const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`);
       if (!fileResponse.ok) {
         const errorBody = await safeReadJson(fileResponse);
-        throw new Error(errorBody.message || `Unable to fetch attachment ${attachment.name}`);
+        if (errorBody.message) {
+          throw new Error(errorBody.message);
+        }
+        throw createLocalizedError((currentText) => currentText.reader.errors.fetchAttachmentFailed(attachment.name));
       }
 
       const encryptedBytes = await fileResponse.arrayBuffer();
@@ -330,7 +410,7 @@ async function loadMessage() {
       });
     }
 
-    setReaderStatus(text.value.reader.confirming);
+    setReaderStatus((currentText) => currentText.reader.confirming);
 
     const confirmResponse = await fetch("/api/confirm-read", {
       method: "POST",
@@ -342,21 +422,21 @@ async function loadMessage() {
 
     const confirmResult = await safeReadJson(confirmResponse);
     if (!confirmResponse.ok) {
-      setReaderStatus(confirmResult.message || "Confirm failed", "warning");
+      setReaderStatus(confirmResult.message || ((currentText) => currentText.reader.errors.confirmFailed), "warning");
     } else if (confirmResult.burned) {
-      setReaderStatus(text.value.reader.burned, "success");
+      setReaderStatus((currentText) => currentText.reader.burned, "success");
     } else {
-      setReaderStatus(text.value.reader.remaining(confirmResult.remainingReads), "success");
+      setReaderStatus((currentText) => currentText.reader.remaining(confirmResult.remainingReads), "success");
     }
 
-    reader.message = payload.message || "";
+    setReaderMessage(payload.message || "");
     reader.attachments = decryptedAttachments;
     reader.loaded = true;
   } catch (error) {
-    reader.message = text.value.reader.unavailable;
+    setReaderMessage((currentText) => currentText.reader.unavailable);
     reader.attachments = [];
     reader.loaded = true;
-    setReaderStatus(error.message || "Decrypt failed", "error");
+    setReaderStatus(error.localizedRenderer || error.message || ((currentText) => currentText.reader.errors.decryptFailed), "error");
   }
 }
 
@@ -367,9 +447,9 @@ async function copyShareLink() {
 
   try {
     await navigator.clipboard.writeText(shareLink.value);
-    setComposerStatus(text.value.composer.copied, "success");
+    setComposerStatus((currentText) => currentText.composer.copied, "success");
   } catch {
-    setComposerStatus(text.value.composer.copyFailed, "warning");
+    setComposerStatus((currentText) => currentText.composer.copyFailed, "warning");
   }
 }
 
@@ -382,16 +462,14 @@ async function previewAttachment(attachment) {
   }
 
   if (previewKind === "text") {
-    const textContent = await attachment.blob.text();
+    preview.name = attachment.name;
+    preview.sourceText = await attachment.blob.text();
     preview.kind = "text";
-    preview.textContent =
-      textContent.length > 200000
-        ? `${textContent.slice(0, 200000)}\n\n[Preview truncated. Download to see the full file.]`
-        : textContent;
     preview.visible = true;
     return;
   }
 
+  preview.name = attachment.name;
   preview.activeUrl = URL.createObjectURL(attachment.blob);
   preview.kind = previewKind;
   preview.visible = true;
@@ -407,13 +485,16 @@ function downloadAttachment(attachment) {
 }
 
 function clearPreview() {
+  closeExpandedPreview();
+
   if (preview.activeUrl) {
     URL.revokeObjectURL(preview.activeUrl);
     preview.activeUrl = "";
   }
 
   preview.kind = "";
-  preview.textContent = "";
+  preview.name = "";
+  preview.sourceText = "";
   preview.visible = false;
 }
 </script>
@@ -487,7 +568,7 @@ function clearPreview() {
           <div
             :class="[toneClasses(reader.statusTone), 'rounded-xl border px-4 py-3.5 text-sm font-semibold']"
           >
-            {{ reader.statusMessage }}
+            {{ readerStatusMessage }}
           </div>
 
           <!-- Message body -->
@@ -537,7 +618,23 @@ function clearPreview() {
 
         <!-- Right: preview card -->
         <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
-          <h1 class="text-xl font-bold text-card-foreground">{{ text.reader.previewTitle }}</h1>
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <h1 class="text-xl font-bold text-card-foreground">{{ text.reader.previewTitle }}</h1>
+              <p v-if="preview.visible && preview.name" class="mt-1 truncate text-sm text-muted-foreground">
+                {{ preview.name }}
+              </p>
+            </div>
+            <Button
+              v-if="hasExpandablePreview"
+              variant="secondary"
+              size="sm"
+              type="button"
+              @click="openExpandedPreview"
+            >
+              {{ text.reader.expandPreview }}
+            </Button>
+          </div>
 
           <div
             v-if="!preview.visible"
@@ -549,17 +646,20 @@ function clearPreview() {
             v-else-if="preview.kind === 'text'"
             class="grid min-h-[520px] place-items-start overflow-auto rounded-xl border border-border p-4"
           >
-            <pre class="m-0 w-full min-h-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ preview.textContent }}</pre>
+            <pre class="m-0 w-full min-h-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
           </div>
-          <div
+          <button
             v-else-if="preview.kind === 'image'"
-            class="grid min-h-[520px] place-items-center overflow-auto rounded-xl border border-border p-4"
+            class="grid min-h-[520px] w-full cursor-zoom-in place-items-center overflow-auto rounded-xl border border-border bg-muted/20 p-4"
+            :title="text.reader.expandPreview"
+            type="button"
+            @click="openExpandedPreview"
           >
             <img class="block max-h-[480px] max-w-full rounded border-0 bg-muted" :src="preview.activeUrl" alt="attachment preview">
-          </div>
+          </button>
           <div
             v-else-if="preview.kind === 'video'"
-            class="grid min-h-[520px] place-items-center overflow-auto rounded-xl border border-border p-4"
+            class="grid min-h-[520px] place-items-center overflow-auto rounded-xl border border-border bg-muted/20 p-4"
           >
             <video class="block max-h-[480px] max-w-full rounded border-0 bg-muted" :src="preview.activeUrl" controls playsinline></video>
           </div>
@@ -656,7 +756,7 @@ function clearPreview() {
             <div
               :class="[toneClasses(composerStatus.tone), 'rounded-xl border px-4 py-3.5 text-sm font-semibold']"
             >
-              {{ composerStatus.message }}
+              {{ composerStatusMessage }}
             </div>
 
             <!-- Submit -->
@@ -685,6 +785,58 @@ function clearPreview() {
           </transition>
         </div>
       </section>
+
+      <teleport to="body">
+        <transition name="fade-up">
+          <div
+            v-if="isPreviewExpanded"
+            class="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            @click.self="closeExpandedPreview"
+          >
+            <div class="flex h-full flex-col p-4 sm:p-6">
+              <div class="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-border bg-card/95 px-4 py-3 shadow-xl">
+                <div class="min-w-0">
+                  <h2 class="truncate text-base font-semibold text-card-foreground">{{ previewDialogTitle }}</h2>
+                  <p class="text-sm text-muted-foreground">{{ text.reader.previewTitle }}</p>
+                </div>
+                <Button variant="secondary" size="sm" type="button" @click="closeExpandedPreview">
+                  {{ text.reader.closeExpandedPreview }}
+                </Button>
+              </div>
+
+              <div class="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div
+                  v-if="preview.kind === 'text'"
+                  class="h-full overflow-auto p-5 sm:p-6"
+                >
+                  <pre class="m-0 w-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
+                </div>
+                <div
+                  v-else-if="preview.kind === 'image'"
+                  class="grid h-full place-items-center overflow-auto bg-muted/20 p-5 sm:p-6"
+                >
+                  <img class="block max-h-full max-w-full rounded-lg border-0 bg-muted" :src="preview.activeUrl" alt="attachment preview">
+                </div>
+                <div
+                  v-else-if="preview.kind === 'video'"
+                  class="grid h-full place-items-center overflow-auto bg-muted/20 p-5 sm:p-6"
+                >
+                  <video class="block max-h-full max-w-full rounded-lg border-0 bg-muted" :src="preview.activeUrl" controls playsinline></video>
+                </div>
+                <iframe
+                  v-else-if="preview.kind === 'pdf'"
+                  class="h-full w-full border-0 bg-muted/20"
+                  :src="preview.activeUrl"
+                  title="attachment preview expanded"
+                  sandbox="allow-downloads allow-same-origin"
+                ></iframe>
+              </div>
+            </div>
+          </div>
+        </transition>
+      </teleport>
 
       <!-- Footer -->
       <footer class="mt-6 flex justify-center">

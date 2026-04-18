@@ -66,10 +66,13 @@ export const messages = {
         emptyDraft: "至少填写文本或选择一个附件。",
         exceedsSize: "附件总大小不能超过 50MB。",
         unsupportedType: (name) => `不支持的附件类型: ${name}`
+      },
+      errors: {
+        createFailed: "创建失败。"
       }
     },
     reader: {
-      title: "读取并确认焚毁",
+      title: "密文内容",
       previewTitle: "附件预览",
       bodyTitle: "消息正文",
       attachmentsTitle: "已解密附件",
@@ -85,7 +88,19 @@ export const messages = {
       remaining: (count) => `消息已在本地解密，本次访问已确认，还剩 ${count} 次可读。`,
       unavailable: "无法显示消息内容。",
       noAttachments: "这条消息没有附件。",
-      summary: (count) => `已解密 ${count} 个附件。`
+      summary: (count) => `已解密 ${count} 个附件。`,
+      expandPreview: "查看大图",
+      closeExpandedPreview: "关闭预览",
+      previewTruncated: "[预览已截断。请下载附件查看完整内容。]",
+      errors: {
+        missingMessageId: "缺少消息 ID。",
+        missingDecryptionKey: "缺少解密密钥。",
+        readFailed: "读取失败。",
+        fetchAttachmentFailed: (name) => `无法获取附件: ${name}`,
+        missingAttachmentEnvelope: (index) => `缺少附件 ${index} 的加密封装信息。`,
+        confirmFailed: "确认焚毁失败。",
+        decryptFailed: "解密失败。"
+      }
     },
     common: {
       preview: "预览",
@@ -171,10 +186,13 @@ export const messages = {
         emptyDraft: "Enter a message or select at least one attachment.",
         exceedsSize: "Total attachment size must not exceed 50MB.",
         unsupportedType: (name) => `Unsupported attachment type: ${name}`
+      },
+      errors: {
+        createFailed: "Create failed."
       }
     },
     reader: {
-      title: "Read and Confirm Burn",
+      title: "Encrypted Content",
       previewTitle: "Attachment Preview",
       bodyTitle: "Message",
       attachmentsTitle: "Decrypted Attachments",
@@ -190,7 +208,19 @@ export const messages = {
       remaining: (count) => `The message was decrypted locally. This access is confirmed, and ${count} read(s) remain.`,
       unavailable: "Unable to display the message.",
       noAttachments: "This message has no attachments.",
-      summary: (count) => `${count} attachment(s) decrypted.`
+      summary: (count) => `${count} attachment(s) decrypted.`,
+      expandPreview: "Open large preview",
+      closeExpandedPreview: "Close preview",
+      previewTruncated: "[Preview truncated. Download the file to view the full content.]",
+      errors: {
+        missingMessageId: "Missing message id.",
+        missingDecryptionKey: "Missing decryption key.",
+        readFailed: "Read failed.",
+        fetchAttachmentFailed: (name) => `Unable to fetch attachment: ${name}`,
+        missingAttachmentEnvelope: (index) => `Missing encrypted envelope for attachment ${index}.`,
+        confirmFailed: "Confirm failed.",
+        decryptFailed: "Decrypt failed."
+      }
     },
     common: {
       preview: "Preview",
