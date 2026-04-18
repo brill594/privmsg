@@ -2,10 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  PASSWORD_PROTECTION_ITERATIONS,
+  MAX_MESSAGE_CHARACTERS,
+  clampMessageCharacters,
+  countMessageCharacters,
   inferMimeType,
   deriveAccessKeyMaterial,
   decryptBytes,
   decryptJsonValue,
+  derivePasswordProof,
   deriveX25519SharedSecret,
   base64UrlDecode,
   base64UrlEncode,
@@ -14,9 +19,11 @@ import {
   exportX25519PrivateKey,
   exportX25519PublicKey,
   generateX25519KeyPair,
+  generatePasswordSalt,
   importX25519PrivateKey,
   importX25519PublicKey,
-  normalizeKeyText
+  normalizeKeyText,
+  validateDraft
 } from "../frontend/lib/privmsg.js";
 
 test("round-trips enhanced-encryption helpers with X25519", async () => {
@@ -66,6 +73,30 @@ test("derives stable outer key material from local and server key shares", async
 
   assert.equal(first.byteLength, 32);
   assert.deepEqual(Array.from(first), Array.from(second));
+});
+
+test("derives stable password proofs and enforces the 100k character cap", async () => {
+  const messageId = "test-message-id-0123456789";
+  const salt = generatePasswordSalt();
+  const password = "correct horse battery staple";
+
+  const first = await derivePasswordProof(password, salt, messageId, PASSWORD_PROTECTION_ITERATIONS);
+  const second = await derivePasswordProof(password, salt, messageId, PASSWORD_PROTECTION_ITERATIONS);
+  const different = await derivePasswordProof("another password", salt, messageId, PASSWORD_PROTECTION_ITERATIONS);
+
+  assert.equal(first.length, 43);
+  assert.equal(first, second);
+  assert.notEqual(first, different);
+
+  const overLimit = "密".repeat(MAX_MESSAGE_CHARACTERS + 1);
+  assert.equal(countMessageCharacters(overLimit), MAX_MESSAGE_CHARACTERS + 1);
+  assert.equal(countMessageCharacters(clampMessageCharacters(overLimit)), MAX_MESSAGE_CHARACTERS);
+  assert.equal(
+    validateDraft(overLimit, [], {
+      exceedsMessageLength: (limit) => `too long ${limit}`
+    }),
+    `too long ${MAX_MESSAGE_CHARACTERS}`
+  );
 });
 
 test("infers pk8 mime type for generated private keys", () => {

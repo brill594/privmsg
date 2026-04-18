@@ -4,12 +4,18 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { ENCRYPTION_MODE_ENHANCED, ENCRYPTION_MODE_STANDARD, getPreviewKind } from "../src/shared.js";
 import {
   DEFAULT_READ_LIMIT,
+  MAX_MESSAGE_CHARACTERS,
+  PASSWORD_PROTECTION_ALGORITHM,
+  PASSWORD_PROTECTION_ITERATIONS,
   MAX_READ_LIMIT,
   base64UrlEncode,
   base64UrlDecode,
+  clampMessageCharacters,
   clampReadLimit,
+  countMessageCharacters,
   decryptBytes,
   deriveAccessKeyMaterial,
+  derivePasswordProof,
   decryptJsonValue,
   encryptAttachment,
   encryptBytes,
@@ -19,6 +25,7 @@ import {
   exportX25519PublicKey,
   formatBytes,
   generateX25519KeyPair,
+  generatePasswordSalt,
   importX25519PrivateKey,
   importX25519PublicKey,
   inferMimeType,
@@ -35,6 +42,7 @@ import ThemeToggle from "./components/ThemeToggle.vue";
 
 const THEME_KEY = "privmsg.theme";
 const ENHANCED_PUBLIC_KEY_KEY = "privmsg.enhanced-public-key";
+const PASSWORD_PROOF_HEADER = "x-privmsg-password-proof";
 
 const policyMode = window.location.pathname === "/policy" || window.location.pathname === "/policy/";
 const readerMode = window.location.pathname.startsWith("/m/");
@@ -49,7 +57,9 @@ const composer = reactive({
   ttlSeconds: 86400,
   maxReads: DEFAULT_READ_LIMIT,
   encryptionMode: ENCRYPTION_MODE_STANDARD,
-  recipientPublicKey: ""
+  recipientPublicKey: "",
+  accessPassword: "",
+  accessPasswordConfirmation: ""
 });
 
 const composerStatus = reactive({
@@ -73,6 +83,7 @@ const shareLink = ref("");
 const isCreating = ref(false);
 const fileInput = ref(null);
 const readerPrivateKeyInput = ref(null);
+const readerPasswordInput = ref(null);
 const isPreviewExpanded = ref(false);
 
 const reader = reactive({
@@ -100,8 +111,16 @@ const readerPrivateKeyPrompt = reactive({
   errorRenderer: null
 });
 
+const readerPasswordPrompt = reactive({
+  visible: false,
+  password: "",
+  errorMessage: "",
+  errorRenderer: null
+});
+
 let enhancedBootstrapPromise = null;
 let pendingPrivateKeyRequest = null;
+let pendingPasswordRequest = null;
 
 /* ---------- theme ---------- */
 
@@ -137,6 +156,7 @@ function applyTheme() {
 /* ---------- computed ---------- */
 
 const selectedTotalSize = computed(() => composer.files.reduce((sum, file) => sum + file.size, 0));
+const messageCharacterCount = computed(() => countMessageCharacters(composer.message));
 const isEnhancedEncryptionEnabled = computed(() => composer.encryptionMode === ENCRYPTION_MODE_ENHANCED);
 const selectedFileSummary = computed(() => {
   if (!composer.files.length) {
@@ -184,6 +204,9 @@ const hasExpandablePreview = computed(() => preview.visible && ["text", "image",
 const readerStatusMessage = computed(() => resolveLocalizedText(reader.statusMessage, reader.statusRenderer));
 const readerPrivateKeyPromptError = computed(() =>
   resolveLocalizedText(readerPrivateKeyPrompt.errorMessage, readerPrivateKeyPrompt.errorRenderer)
+);
+const readerPasswordPromptError = computed(() =>
+  resolveLocalizedText(readerPasswordPrompt.errorMessage, readerPasswordPrompt.errorRenderer)
 );
 const readerMessage = computed(() => {
   if (!reader.loaded) {
@@ -240,6 +263,11 @@ function setReaderPrivateKeyPromptError(messageOrRenderer = "") {
   readerPrivateKeyPrompt.errorRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
 }
 
+function setReaderPasswordPromptError(messageOrRenderer = "") {
+  readerPasswordPrompt.errorMessage = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
+  readerPasswordPrompt.errorRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
+}
+
 /* ---------- lifecycle ---------- */
 
 watch(
@@ -281,6 +309,16 @@ watch(
   }
 );
 
+watch(
+  () => composer.message,
+  (value) => {
+    const truncated = clampMessageCharacters(value, MAX_MESSAGE_CHARACTERS);
+    if (truncated !== value) {
+      composer.message = truncated;
+    }
+  }
+);
+
 onMounted(() => {
   window.addEventListener("keydown", handleWindowKeydown);
 
@@ -294,6 +332,7 @@ onBeforeUnmount(() => {
   document.body.style.overflow = "";
   clearPreview();
   cancelReaderPrivateKeyPrompt(true);
+  cancelReaderPasswordPrompt(true);
 });
 
 /* ---------- helpers ---------- */
@@ -524,16 +563,22 @@ async function requestCreateBootstrap() {
   return result;
 }
 
-async function requestAccessKey(messageId) {
+async function requestAccessKey(messageId, passwordProof = "") {
   const response = await fetch(`/api/message/${messageId}/access-key`, {
     method: "POST",
     headers: {
-      Accept: "application/json"
+      ...buildPasswordHeaders(passwordProof, {
+        Accept: "application/json"
+      })
     }
   });
 
   const result = await safeReadJson(response);
   if (!response.ok) {
+    if (response.status === 401 && (result.error === "password_required" || result.error === "invalid_password")) {
+      throw createLocalizedError((currentText) => currentText.reader.errors.invalidPassword);
+    }
+
     if (result.message) {
       throw new Error(result.message);
     }
@@ -546,6 +591,147 @@ async function requestAccessKey(messageId) {
   }
 
   return result;
+}
+
+function buildPasswordHeaders(passwordProof = "", headers = {}) {
+  if (!passwordProof) {
+    return headers;
+  }
+
+  return {
+    ...headers,
+    [PASSWORD_PROOF_HEADER]: passwordProof
+  };
+}
+
+async function buildComposerPasswordProtection(messageId) {
+  const password = String(composer.accessPassword || "");
+  const confirmation = String(composer.accessPasswordConfirmation || "");
+
+  if (!password && !confirmation) {
+    return null;
+  }
+
+  if (!password.trim()) {
+    throw createLocalizedError((currentText) => currentText.composer.validation.missingAccessPassword);
+  }
+
+  if (password !== confirmation) {
+    throw createLocalizedError((currentText) => currentText.composer.validation.accessPasswordMismatch);
+  }
+
+  const saltBytes = generatePasswordSalt();
+  return {
+    algorithm: PASSWORD_PROTECTION_ALGORITHM,
+    salt: base64UrlEncode(saltBytes),
+    iterations: PASSWORD_PROTECTION_ITERATIONS,
+    verifier: await derivePasswordProof(password, saltBytes, messageId, PASSWORD_PROTECTION_ITERATIONS)
+  };
+}
+
+function normalizePasswordChallenge(passwordProtection) {
+  if (!passwordProtection || typeof passwordProtection !== "object") {
+    throw createLocalizedError((currentText) => currentText.reader.errors.invalidPasswordChallenge);
+  }
+
+  const salt = String(passwordProtection.salt || "");
+  const iterations = Number(passwordProtection.iterations);
+  if (!salt || !Number.isInteger(iterations) || iterations <= 0) {
+    throw createLocalizedError((currentText) => currentText.reader.errors.invalidPasswordChallenge);
+  }
+
+  return {
+    algorithm: typeof passwordProtection.algorithm === "string" ? passwordProtection.algorithm : PASSWORD_PROTECTION_ALGORITHM,
+    salt,
+    iterations
+  };
+}
+
+function requestReaderPassword(initialError = "") {
+  readerPasswordPrompt.visible = true;
+  readerPasswordPrompt.password = "";
+  setReaderPasswordPromptError(initialError);
+
+  return new Promise((resolve, reject) => {
+    pendingPasswordRequest = { resolve, reject };
+  });
+}
+
+function cancelReaderPasswordPrompt(silent = false) {
+  readerPasswordPrompt.visible = false;
+  readerPasswordPrompt.password = "";
+  setReaderPasswordPromptError("");
+
+  if (!pendingPasswordRequest) {
+    return;
+  }
+
+  const { reject } = pendingPasswordRequest;
+  pendingPasswordRequest = null;
+  if (!silent) {
+    reject(createLocalizedError((currentText) => currentText.reader.errors.passwordRequired));
+  }
+}
+
+function confirmReaderPassword() {
+  if (!pendingPasswordRequest) {
+    return;
+  }
+
+  if (!readerPasswordPrompt.password.trim()) {
+    setReaderPasswordPromptError((currentText) => currentText.reader.errors.passwordRequired);
+    return;
+  }
+
+  const password = readerPasswordPrompt.password;
+  const { resolve } = pendingPasswordRequest;
+  pendingPasswordRequest = null;
+  readerPasswordPrompt.visible = false;
+  readerPasswordPrompt.password = "";
+  setReaderPasswordPromptError("");
+  resolve(password);
+}
+
+async function promptReaderPasswordProof(messageId, passwordProtection, initialError = "") {
+  const challenge = normalizePasswordChallenge(passwordProtection);
+  setReaderStatus((currentText) => currentText.reader.enterPassword);
+  const password = await requestReaderPassword(initialError);
+  return derivePasswordProof(password, base64UrlDecode(challenge.salt), messageId, challenge.iterations);
+}
+
+async function fetchMessageEnvelope(messageId) {
+  let passwordProof = "";
+
+  while (true) {
+    const response = await fetch(`/api/message/${messageId}`, {
+      headers: buildPasswordHeaders(passwordProof, {
+        Accept: "application/json"
+      })
+    });
+
+    const envelope = await safeReadJson(response);
+    if (response.ok) {
+      return {
+        envelope,
+        passwordProof
+      };
+    }
+
+    if (response.status === 401 && (envelope.error === "password_required" || envelope.error === "invalid_password")) {
+      passwordProof = await promptReaderPasswordProof(
+        messageId,
+        envelope.passwordProtection,
+        envelope.error === "invalid_password" ? (currentText) => currentText.reader.errors.invalidPassword : ""
+      );
+      continue;
+    }
+
+    if (envelope.message) {
+      throw new Error(envelope.message);
+    }
+
+    throw createLocalizedError((currentText) => currentText.reader.errors.readFailed);
+  }
 }
 
 async function createMessage() {
@@ -569,6 +755,7 @@ async function createMessage() {
 
     const localKeyShareBytes = crypto.getRandomValues(new Uint8Array(32));
     const accessKeyMaterial = await deriveAccessKeyMaterial(localKeyShareBytes, serverKeyShareBytes, messageId);
+    const passwordProtection = await buildComposerPasswordProtection(messageId);
     const maxReads = clampReadLimit(composer.maxReads);
     const totalFiles = composer.files.length;
     const localKeyShare = base64UrlEncode(localKeyShareBytes);
@@ -653,6 +840,7 @@ async function createMessage() {
     const metadata = {
       id: messageId,
       serverKeyShare,
+      passwordProtection,
       encryptionMode,
       totalSize,
       expiresInSeconds: Number(composer.ttlSeconds),
@@ -688,7 +876,13 @@ async function createMessage() {
     }
 
     shareLink.value = `${window.location.origin}/m/${messageId}#${localKeyShare}`;
-    setComposerStatus((currentText) => currentText.composer.created(maxReads), "success");
+    composer.accessPassword = "";
+    composer.accessPasswordConfirmation = "";
+    setComposerStatus(
+      (currentText) =>
+        passwordProtection ? currentText.composer.createdWithPassword(maxReads) : currentText.composer.created(maxReads),
+      "success"
+    );
   } catch (error) {
     setComposerStatus(
       error.localizedRenderer || error.message || ((currentText) => currentText.composer.errors.createFailed),
@@ -727,20 +921,7 @@ async function loadMessage() {
     }
 
     setReaderStatus((currentText) => currentText.reader.fetching);
-
-    const messageResponse = await fetch(`/api/message/${messageId}`, {
-      headers: {
-        Accept: "application/json"
-      }
-    });
-
-    const envelope = await messageResponse.json();
-    if (!messageResponse.ok) {
-      if (envelope.message) {
-        throw new Error(envelope.message);
-      }
-      throw createLocalizedError((currentText) => currentText.reader.errors.readFailed);
-    }
+    const { envelope, passwordProof } = await fetchMessageEnvelope(messageId);
 
     const encryptionMode = envelope.encryptionMode || ENCRYPTION_MODE_STANDARD;
     let readerPrivateKey = null;
@@ -756,9 +937,15 @@ async function loadMessage() {
       setReaderStatus((currentText) => currentText.reader.fetchingAttachments);
 
       for (const attachment of envelope.attachments || []) {
-        const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`);
+        const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`, {
+          headers: buildPasswordHeaders(passwordProof)
+        });
         if (!fileResponse.ok) {
           const errorBody = await safeReadJson(fileResponse);
+          if (fileResponse.status === 401 && (errorBody.error === "password_required" || errorBody.error === "invalid_password")) {
+            throw createLocalizedError((currentText) => currentText.reader.errors.invalidPassword);
+          }
+
           if (errorBody.message) {
             throw new Error(errorBody.message);
           }
@@ -771,7 +958,7 @@ async function loadMessage() {
     }
 
     setReaderStatus((currentText) => currentText.reader.requestingAccessKey);
-    const accessKeyResult = await requestAccessKey(messageId);
+    const accessKeyResult = await requestAccessKey(messageId, passwordProof);
     const serverKeyShareBytes = base64UrlDecode(accessKeyResult.serverKeyShare);
     if (serverKeyShareBytes.byteLength !== 32) {
       throw createLocalizedError((currentText) => currentText.reader.errors.invalidAccessKey);
@@ -1195,11 +1382,16 @@ function clearPreview() {
           <form class="space-y-5" @submit.prevent="createMessage">
             <!-- Message body -->
             <div class="space-y-2.5">
-              <label class="text-sm font-semibold text-foreground">{{ text.composer.bodyLabel }}</label>
+              <div class="flex items-center justify-between gap-3">
+                <label class="text-sm font-semibold text-foreground">{{ text.composer.bodyLabel }}</label>
+                <span class="text-xs text-muted-foreground">
+                  {{ text.composer.bodyCounter(messageCharacterCount, MAX_MESSAGE_CHARACTERS) }}
+                </span>
+              </div>
               <textarea
                 v-model="composer.message"
                 rows="8"
-                maxlength="100000"
+                :maxlength="MAX_MESSAGE_CHARACTERS"
                 :placeholder="text.composer.bodyPlaceholder"
                 class="min-h-[190px] w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               ></textarea>
@@ -1359,6 +1551,44 @@ function clearPreview() {
               </div>
             </div>
 
+            <!-- Optional password gate -->
+            <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+              <div class="space-y-1">
+                <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.passwordProtectionTitle }}</p>
+                <p class="m-0 text-sm leading-relaxed text-muted-foreground">
+                  {{ text.composer.passwordProtectionHint }}
+                </p>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-2">
+                  <label class="text-sm font-semibold text-foreground">
+                    {{ text.composer.accessPasswordLabel }}
+                  </label>
+                  <input
+                    v-model="composer.accessPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    :placeholder="text.composer.accessPasswordPlaceholder"
+                    class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-semibold text-foreground">
+                    {{ text.composer.accessPasswordConfirmationLabel }}
+                  </label>
+                  <input
+                    v-model="composer.accessPasswordConfirmation"
+                    type="password"
+                    autocomplete="new-password"
+                    :placeholder="text.composer.accessPasswordConfirmationPlaceholder"
+                    class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                </div>
+              </div>
+            </div>
+
             <!-- Attachment summary -->
             <div class="space-y-1 rounded-xl border border-border bg-muted/30 p-4">
               <span class="text-sm font-semibold text-foreground">{{ text.composer.summaryLabel }}</span>
@@ -1496,6 +1726,63 @@ function clearPreview() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+        </transition>
+      </teleport>
+
+      <teleport to="body">
+        <transition name="fade-up">
+          <div
+            v-if="readerPasswordPrompt.visible"
+            class="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            @click.self="cancelReaderPasswordPrompt"
+          >
+            <div class="flex h-full items-center justify-center p-4 sm:p-6">
+              <form
+                class="w-full max-w-lg space-y-4 rounded-2xl border border-border bg-card p-6 shadow-2xl"
+                @submit.prevent="confirmReaderPassword"
+              >
+                <div class="space-y-2">
+                  <h2 class="text-lg font-semibold text-card-foreground">{{ text.reader.passwordPromptTitle }}</h2>
+                  <p class="text-sm leading-relaxed text-muted-foreground">
+                    {{ text.reader.passwordPromptBody }}
+                  </p>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-semibold text-foreground">
+                    {{ text.reader.passwordPromptLabel }}
+                  </label>
+                  <input
+                    ref="readerPasswordInput"
+                    v-model="readerPasswordPrompt.password"
+                    type="password"
+                    autocomplete="current-password"
+                    :placeholder="text.reader.passwordPromptPlaceholder"
+                    autofocus
+                    class="h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                </div>
+
+                <div
+                  v-if="readerPasswordPromptError"
+                  :class="[toneClasses('error'), 'rounded-xl border px-4 py-3 text-sm font-semibold']"
+                >
+                  {{ readerPasswordPromptError }}
+                </div>
+
+                <div class="flex flex-wrap justify-end gap-2">
+                  <Button variant="secondary" type="button" @click="cancelReaderPasswordPrompt">
+                    {{ text.reader.passwordPromptCancel }}
+                  </Button>
+                  <Button type="submit">
+                    {{ text.reader.passwordPromptConfirm }}
+                  </Button>
+                </div>
+              </form>
             </div>
           </div>
         </transition>

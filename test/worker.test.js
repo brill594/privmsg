@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  PASSWORD_PROTECTION_ALGORITHM,
+  PASSWORD_PROTECTION_ITERATIONS,
+  base64UrlDecode,
+  base64UrlEncode,
+  derivePasswordProof,
+  generatePasswordSalt
+} from "../frontend/lib/privmsg.js";
 import worker from "../src/worker.js";
 
 function createEnv() {
@@ -28,8 +36,14 @@ function createMessageEnv({
   readCount = 0,
   burned = 0,
   serverKeyShare = "A".repeat(43),
-  encryptionMode = "standard"
+  encryptionMode = "standard",
+  passwordProtection = null
 } = {}) {
+  const attachments = Array.from({ length: attachmentCount }, (_, index) => ({
+    index,
+    iv: `attachment-iv-${index}`,
+    encryptedSize: 3
+  }));
   const payloadObject = {
     version: 1,
     encryptionMode,
@@ -37,9 +51,10 @@ function createMessageEnv({
       iv: "payload-iv",
       ciphertext: "payload-ciphertext"
     },
-    attachments: [],
+    attachments,
     access: {
-      serverKeyShare
+      serverKeyShare,
+      ...(passwordProtection ? { passwordProtection } : {})
     }
   };
   const message = {
@@ -114,6 +129,13 @@ function createMessageEnv({
           };
         }
 
+        const attachmentMatch = key.match(new RegExp(`^messages/${id}/files/(\\d+)\\.bin$`));
+        if (attachmentMatch) {
+          return {
+            body: new Uint8Array([1, 2, 3])
+          };
+        }
+
         return null;
       },
       async delete(key) {
@@ -132,6 +154,16 @@ function createMessageEnv({
     message,
     deletedKeys,
     serverKeyShare
+  };
+}
+
+async function createPasswordProtection(id, password = "shared-secret") {
+  const salt = generatePasswordSalt();
+  return {
+    algorithm: PASSWORD_PROTECTION_ALGORITHM,
+    salt: base64UrlEncode(salt),
+    iterations: PASSWORD_PROTECTION_ITERATIONS,
+    verifier: await derivePasswordProof(password, salt, id, PASSWORD_PROTECTION_ITERATIONS)
   };
 }
 
@@ -225,4 +257,75 @@ test("issues the server key share and consumes a read atomically", async () => {
   assert.equal(body.remainingReads, 0);
   assert.equal(message.readCount, 1);
   assert.deepEqual(deletedKeys, ["messages/test-message-id-0123456789/payload.bin"]);
+});
+
+test("requires the access password before returning ciphertext or access keys", async () => {
+  const id = "test-message-id-0123456789";
+  const passwordProtection = await createPasswordProtection(id);
+  const { env } = createMessageEnv({ id, attachmentCount: 1, passwordProtection });
+
+  const messageResponse = await worker.fetch(new Request(`https://example.com/api/message/${id}`), env, {
+    waitUntil() {}
+  });
+  assert.equal(messageResponse.status, 401);
+  const messageBody = await messageResponse.json();
+  assert.equal(messageBody.error, "password_required");
+  assert.equal(messageBody.payload, undefined);
+  assert.equal(messageBody.passwordProtection.salt, passwordProtection.salt);
+
+  const accessKeyResponse = await worker.fetch(new Request(`https://example.com/api/message/${id}/access-key`, { method: "POST" }), env, {
+    waitUntil() {}
+  });
+  assert.equal(accessKeyResponse.status, 401);
+  const accessKeyBody = await accessKeyResponse.json();
+  assert.equal(accessKeyBody.error, "password_required");
+  assert.equal(accessKeyBody.serverKeyShare, undefined);
+
+  const fileResponse = await worker.fetch(new Request(`https://example.com/api/message/${id}/file/0`), env, {
+    waitUntil() {}
+  });
+  assert.equal(fileResponse.status, 401);
+});
+
+test("returns ciphertext after the correct access password proof is supplied", async () => {
+  const id = "test-message-id-0123456789";
+  const passwordProtection = await createPasswordProtection(id);
+  const { env, serverKeyShare } = createMessageEnv({ id, passwordProtection });
+  const passwordProof = await derivePasswordProof(
+    "shared-secret",
+    base64UrlDecode(passwordProtection.salt),
+    id,
+    PASSWORD_PROTECTION_ITERATIONS
+  );
+
+  const messageResponse = await worker.fetch(
+    new Request(`https://example.com/api/message/${id}`, {
+      headers: {
+        "x-privmsg-password-proof": passwordProof
+      }
+    }),
+    env,
+    {
+      waitUntil() {}
+    }
+  );
+  assert.equal(messageResponse.status, 200);
+  const messageBody = await messageResponse.json();
+  assert.equal(messageBody.payload.ciphertext, "payload-ciphertext");
+
+  const accessKeyResponse = await worker.fetch(
+    new Request(`https://example.com/api/message/${id}/access-key`, {
+      method: "POST",
+      headers: {
+        "x-privmsg-password-proof": passwordProof
+      }
+    }),
+    env,
+    {
+      waitUntil() {}
+    }
+  );
+  assert.equal(accessKeyResponse.status, 200);
+  const accessKeyBody = await accessKeyResponse.json();
+  assert.equal(accessKeyBody.serverKeyShare, serverKeyShare);
 });

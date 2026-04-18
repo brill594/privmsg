@@ -23,6 +23,7 @@ const BINARY_HEADERS = {
   "Content-Disposition": "attachment",
   "X-Content-Type-Options": "nosniff"
 };
+const PASSWORD_PROOF_HEADER = "x-privmsg-password-proof";
 
 const ENHANCED_BOOTSTRAP = {
   version: "x25519-bootstrap-v1",
@@ -60,12 +61,12 @@ export default {
 
       const messageMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})$/);
       if (messageMatch) {
-        return await handleGetMessage(messageMatch[1], env, ctx);
+        return await handleGetMessage(request, messageMatch[1], env, ctx);
       }
 
       const fileMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})\/file\/(\d+)$/);
       if (fileMatch) {
-        return await handleGetFile(fileMatch[1], Number(fileMatch[2]), env, ctx);
+        return await handleGetFile(request, fileMatch[1], Number(fileMatch[2]), env, ctx);
       }
 
       const accessKeyMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})\/access-key$/);
@@ -130,7 +131,8 @@ async function handleCreate(request, env) {
     return json({ error: "invalid_request", message: validation.message }, validation.status);
   }
 
-  const { id, attachments, encryptionMode, totalSize, payload, expiresAt, maxReads, serverKeyShare } = validation.value;
+  const { id, attachments, encryptionMode, totalSize, payload, expiresAt, maxReads, serverKeyShare, passwordProtection } =
+    validation.value;
   const attachmentBuffers = [];
   let totalEncryptedSize = 0;
 
@@ -218,6 +220,13 @@ async function handleCreate(request, env) {
     throw error;
   }
 
+  const access = {
+    serverKeyShare
+  };
+  if (passwordProtection) {
+    access.passwordProtection = passwordProtection;
+  }
+
   const payloadObject = {
     version: 1,
     encryptionMode,
@@ -227,9 +236,7 @@ async function handleCreate(request, env) {
       iv,
       encryptedSize
     })),
-    access: {
-      serverKeyShare
-    }
+    access
   };
 
   try {
@@ -279,7 +286,7 @@ function handleCreateBootstrap(request) {
   });
 }
 
-async function handleGetMessage(id, env, ctx) {
+async function handleGetMessage(request, id, env, ctx) {
   if (!isValidMessageId(id)) {
     return json({ error: "invalid_request", message: "Invalid message id" }, 400);
   }
@@ -294,13 +301,17 @@ async function handleGetMessage(id, env, ctx) {
     return json({ error: "gone", message: "Message has already been burned" }, 410);
   }
 
-  const payloadObject = await env.BUCKET.get(messagePayloadKey(id));
-  if (!payloadObject) {
+  const payload = await getStoredPayload(env, id);
+  if (!payload) {
     ctx.waitUntil(markBurnedAndCleanup(env, message));
     return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
   }
 
-  const payload = JSON.parse(await payloadObject.text());
+  const passwordError = validatePasswordGate(request, payload?.access?.passwordProtection);
+  if (passwordError) {
+    return passwordError;
+  }
+
   const { access: _access, ...publicPayload } = payload;
   return json({
     id: message.id,
@@ -326,7 +337,7 @@ function handleEnhancedBootstrap() {
   });
 }
 
-async function handleGetFile(id, index, env, ctx) {
+async function handleGetFile(request, id, index, env, ctx) {
   if (!isValidMessageId(id) || !Number.isInteger(index) || index < 0) {
     return json({ error: "invalid_request", message: "Invalid attachment request" }, 400);
   }
@@ -339,6 +350,17 @@ async function handleGetFile(id, index, env, ctx) {
   if (isBurnedOrExpired(message)) {
     ctx.waitUntil(markBurnedAndCleanup(env, message));
     return json({ error: "gone", message: "Message has already been burned" }, 410);
+  }
+
+  const payload = await getStoredPayload(env, id);
+  if (!payload) {
+    ctx.waitUntil(markBurnedAndCleanup(env, message));
+    return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
+  }
+
+  const passwordError = validatePasswordGate(request, payload?.access?.passwordProtection);
+  if (passwordError) {
+    return passwordError;
   }
 
   if (index >= message.attachmentCount) {
@@ -379,13 +401,17 @@ async function handleIssueAccessKey(request, id, env) {
     return json({ error: "gone", message: "Message has already been burned" }, 410);
   }
 
-  const payloadObject = await env.BUCKET.get(messagePayloadKey(id));
-  if (!payloadObject) {
+  const payload = await getStoredPayload(env, id);
+  if (!payload) {
     await markBurnedAndCleanup(env, message);
     return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
   }
 
-  const payload = JSON.parse(await payloadObject.text());
+  const passwordError = validatePasswordGate(request, payload?.access?.passwordProtection);
+  if (passwordError) {
+    return passwordError;
+  }
+
   const serverKeyShare = payload?.access?.serverKeyShare;
   if (!isValidKeyShare(serverKeyShare)) {
     await markBurnedAndCleanup(env, message);
@@ -463,6 +489,15 @@ async function getMessageRecord(env, id) {
   return row || null;
 }
 
+async function getStoredPayload(env, id) {
+  const payloadObject = await env.BUCKET.get(messagePayloadKey(id));
+  if (!payloadObject) {
+    return null;
+  }
+
+  return JSON.parse(await payloadObject.text());
+}
+
 function validateCreateMetadata(metadata) {
   if (!metadata || typeof metadata !== "object") {
     return invalid("Metadata must be an object");
@@ -494,6 +529,11 @@ function validateCreateMetadata(metadata) {
   const serverKeyShare = metadata.serverKeyShare;
   if (!isValidKeyShare(serverKeyShare)) {
     return invalid("Invalid server key share");
+  }
+
+  const passwordProtectionValidation = validatePasswordProtection(metadata.passwordProtection);
+  if (!passwordProtectionValidation.ok) {
+    return invalid(passwordProtectionValidation.message);
   }
 
   const rawAttachments = Array.isArray(metadata.attachments) ? metadata.attachments : [];
@@ -545,7 +585,8 @@ function validateCreateMetadata(metadata) {
       totalSize,
       maxReads,
       expiresAt,
-      serverKeyShare
+      serverKeyShare,
+      passwordProtection: passwordProtectionValidation.value
     }
   };
 }
@@ -578,6 +619,82 @@ function json(data, status = 200) {
     status,
     headers: JSON_HEADERS
   });
+}
+
+function validatePasswordGate(request, passwordProtection) {
+  const validation = validatePasswordProtection(passwordProtection);
+  if (!validation.ok) {
+    return json({ error: "gone", message: "Message password protection is unavailable" }, 410);
+  }
+
+  if (!validation.value) {
+    return null;
+  }
+
+  const suppliedProof = request.headers.get(PASSWORD_PROOF_HEADER) || "";
+  if (!isValidKeyShare(suppliedProof)) {
+    return passwordErrorResponse(validation.value, "password_required", "Password required");
+  }
+
+  if (!constantTimeEqual(suppliedProof, validation.value.verifier)) {
+    return passwordErrorResponse(validation.value, "invalid_password", "Invalid password");
+  }
+
+  return null;
+}
+
+function passwordErrorResponse(passwordProtection, error, message) {
+  return json(
+    {
+      error,
+      message,
+      passwordProtection: {
+        algorithm: passwordProtection.algorithm,
+        salt: passwordProtection.salt,
+        iterations: passwordProtection.iterations
+      }
+    },
+    401
+  );
+}
+
+function validatePasswordProtection(passwordProtection) {
+  if (passwordProtection == null) {
+    return { ok: true, value: null };
+  }
+
+  if (!passwordProtection || typeof passwordProtection !== "object") {
+    return invalid("Invalid password protection metadata");
+  }
+
+  const salt = passwordProtection.salt;
+  if (!isValidBase64UrlValue(salt, 16, 128)) {
+    return invalid("Invalid password protection salt");
+  }
+
+  const verifier = passwordProtection.verifier;
+  if (!isValidKeyShare(verifier)) {
+    return invalid("Invalid password protection verifier");
+  }
+
+  const iterations = Number(passwordProtection.iterations);
+  if (!Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000) {
+    return invalid("Invalid password protection iterations");
+  }
+
+  const algorithm = typeof passwordProtection.algorithm === "string" && passwordProtection.algorithm
+    ? passwordProtection.algorithm
+    : "PBKDF2-SHA-256";
+
+  return {
+    ok: true,
+    value: {
+      algorithm,
+      salt,
+      verifier,
+      iterations
+    }
+  };
 }
 
 function isExpired(message) {
@@ -625,6 +742,25 @@ function generateKeyShare() {
 
 function isValidKeyShare(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function isValidBase64UrlValue(value, minLength = 1, maxLength = 256) {
+  return typeof value === "string" && value.length >= minLength && value.length <= maxLength && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function constantTimeEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") {
+    return false;
+  }
+
+  let mismatch = left.length === right.length ? 0 : 1;
+  const maxLength = Math.max(left.length, right.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+
+  return mismatch === 0;
 }
 
 function base64UrlEncode(bytes) {

@@ -1,5 +1,6 @@
 export const MAX_TOTAL_SIZE_BYTES = 50 * 1024 * 1024;
-export const MAX_PAYLOAD_BYTES = 256 * 1024;
+export const MAX_PAYLOAD_BYTES = 768 * 1024;
+export const MAX_MESSAGE_CHARACTERS = 100000;
 export const MIN_TTL_SECONDS = 60 * 60;
 export const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 export const MAX_TTL_SECONDS = 7 * 24 * 60 * 60;

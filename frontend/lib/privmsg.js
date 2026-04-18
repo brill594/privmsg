@@ -2,6 +2,7 @@ import {
   DEFAULT_READ_LIMIT,
   ENCRYPTION_MODE_ENHANCED,
   ENCRYPTION_MODE_STANDARD,
+  MAX_MESSAGE_CHARACTERS,
   MAX_READ_LIMIT,
   MAX_TOTAL_SIZE_BYTES,
   clampReadLimit,
@@ -11,19 +12,31 @@ import {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const X25519_ALGORITHM = "X25519";
+const PASSWORD_SALT_BYTES = 16;
+const PASSWORD_PROTECTION_ITERATIONS = 250000;
+const PASSWORD_PROTECTION_ALGORITHM = "PBKDF2-SHA-256";
 
 export {
   DEFAULT_READ_LIMIT,
   ENCRYPTION_MODE_ENHANCED,
   ENCRYPTION_MODE_STANDARD,
+  MAX_MESSAGE_CHARACTERS,
   MAX_READ_LIMIT,
   MAX_TOTAL_SIZE_BYTES,
-  clampReadLimit
+  clampReadLimit,
+  PASSWORD_PROTECTION_ALGORITHM,
+  PASSWORD_PROTECTION_ITERATIONS
 };
 
 export function validateDraft(message, files, strings = {}) {
   if (!message.trim() && files.length === 0) {
     return strings.emptyDraft || "至少填写文本或选择一个附件。";
+  }
+
+  if (countMessageCharacters(message) > MAX_MESSAGE_CHARACTERS) {
+    return strings.exceedsMessageLength
+      ? strings.exceedsMessageLength(MAX_MESSAGE_CHARACTERS)
+      : `文本长度不能超过 ${MAX_MESSAGE_CHARACTERS} 字。`;
   }
 
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
@@ -38,6 +51,14 @@ export function validateDraft(message, files, strings = {}) {
   }
 
   return "";
+}
+
+export function countMessageCharacters(message) {
+  return Array.from(String(message || "")).length;
+}
+
+export function clampMessageCharacters(message, limit = MAX_MESSAGE_CHARACTERS) {
+  return Array.from(String(message || "")).slice(0, limit).join("");
 }
 
 export async function encryptPayload(payloadObject, masterKeyBytes, messageId) {
@@ -197,6 +218,48 @@ export async function deriveAccessKeyMaterial(localKeyShareBytes, serverKeyShare
       },
       hkdfKey,
       256
+    )
+  );
+}
+
+export function generatePasswordSalt() {
+  return crypto.getRandomValues(new Uint8Array(PASSWORD_SALT_BYTES));
+}
+
+export async function derivePasswordProof(password, saltBytes, messageId, iterations = PASSWORD_PROTECTION_ITERATIONS) {
+  const normalizedPassword = String(password ?? "");
+  if (!normalizedPassword.trim()) {
+    throw new Error("Password is required");
+  }
+
+  const normalizedSalt = saltBytes instanceof Uint8Array ? saltBytes : new Uint8Array(saltBytes);
+  if (!normalizedSalt.byteLength) {
+    throw new Error("Password salt is required");
+  }
+
+  if (!Number.isInteger(iterations) || iterations <= 0) {
+    throw new Error("Invalid password derivation iterations");
+  }
+
+  const passwordKey = await crypto.subtle.importKey("raw", textEncoder.encode(normalizedPassword), "PBKDF2", false, [
+    "deriveBits"
+  ]);
+  const contextualSalt = new Uint8Array(textEncoder.encode(`privmsg:password-proof:v1:${messageId}:`).byteLength + normalizedSalt.byteLength);
+  contextualSalt.set(textEncoder.encode(`privmsg:password-proof:v1:${messageId}:`), 0);
+  contextualSalt.set(normalizedSalt, contextualSalt.byteLength - normalizedSalt.byteLength);
+
+  return base64UrlEncode(
+    new Uint8Array(
+      await crypto.subtle.deriveBits(
+        {
+          name: "PBKDF2",
+          hash: "SHA-256",
+          salt: contextualSalt,
+          iterations
+        },
+        passwordKey,
+        256
+      )
     )
   );
 }
