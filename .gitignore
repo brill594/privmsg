@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-
+zero_knowledge_burn_message_prd.md
 # Build output
 dist/
 public/build-manifest.json
