@@ -36,9 +36,9 @@ preview_bucket_name = "privmsg-payloads-preview"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "privmsg-staging"
-database_id = "replace-with-staging-d1-id"
+database_id = "c7419cce-2f7d-4fd4-9471-041d5e6f6555"
 
 [[env.staging.r2_buckets]]
 binding = "BUCKET"
-bucket_name = "privmsg-staging-payloads"
+bucket_name = "privmsg"
 preview_bucket_name = "privmsg-staging-payloads-preview"
