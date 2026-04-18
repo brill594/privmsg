@@ -2,179 +2,41 @@
 
 中文 | [English](./README.en.md)
 
-一个与 PRD 对齐的 MVP：基于 Vue 构建的纯 Web 前端，客户端加密、服务端零知识、支持文本与多附件，并支持可配置访问次数限制的阅后即焚消息服务。
+`privmsg` 是一个面向敏感信息分享的一次性消息服务。消息在浏览器内完成加密，服务端只保存密文与必要元数据，适合发送短文本、图片、文档和少量附件，并支持访问次数限制与可选密码保护。
 
 相关文档：
 
 - 部署说明（中文）：[docs/deployment.md](./docs/deployment.md)
 - Deployment guide (English): [docs/deployment.en.md](./docs/deployment.en.md)
 
-## 当前实现范围
+## 产品特性
 
-- 浏览器端使用 `AES-GCM` + `HKDF(SHA-256)` 完成加密与解密
-- 链接 fragment 只保存本地密钥 share：`/m/<id>#<local_key_share>`
-- 服务端 API：
-  - `POST /api/create-bootstrap`
-  - `POST /api/create`
-  - `GET /api/message/:id`
-  - `GET /api/message/:id/file/:index`
-  - `POST /api/message/:id/access-key`
-- 附件总大小限制 `<= 50MB`
-- 发送端可设置最大访问次数，当前范围 `1 - 20`
-- 支持类型：`jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf` `pk8`
-- 消息读取端先拉取密文，再向服务端申请一次性解密授权；服务端下发 key share 前会原子扣减访问次数
-- 所有 API 响应都携带 `Cache-Control: no-store`
-- GitHub Actions CI / Deploy 工作流已接入
-- D1 schema 已切换到 [`migrations/`](./migrations/) 管理
-- 提供 GitHub Secrets / Variables 本地检查与同步脚本
-- 固定 Node `22.22.2` 与 Wrangler `4.83.0`
-- 前端已切换为 `Vue 3 + Vite`
-- 增加 D1 / R2 用量统计与限额保护，支持通过 GitHub Variables 为 `staging` / `production` 分别配置阈值
-- 提供 `GET /api/usage` 查看当前 D1 / R2 统计值、窗口与已配置限额
+- 浏览器端完成加密与解密，服务端不接触明文
+- 链接 fragment 仅包含本地密钥 share，便于直接分享
+- 支持文本与多附件发送，附件总大小限制为 `50MB`
+- 支持最大访问次数限制，当前可配置范围为 `1 - 20`
+- 支持访问密码保护，服务端在返回解密授权前先校验密码证明
+- 所有接口响应均带 `Cache-Control: no-store`
+- 当前支持类型：`jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf` `pk8`
 
-## 还未补齐的 PRD 项
+## 使用方式
 
-- 真正的 PDF.js 预览：当前版本先用隔离 iframe 承载 PDF 预览
-- IP 限流 / 创建频率限制
-- 定时清理已过期但尚未读取的对象
-- 更完整的构建一致性校验，例如锁定 wrangler / node 版本并附带发布 hash
+1. 发送者填写消息内容，并可附加文件。
+2. 按需设置访问次数上限与访问密码。
+3. 生成链接后将其发送给接收者。
+4. 接收者打开链接，在浏览器内完成解密与查看。
 
-## 本地启动
-
-1. 使用 [`.nvmrc`](./.nvmrc) 切到固定 Node 版本，然后安装依赖
-
-```bash
-nvm use
-npm install
-```
-
-2. 创建自己的 D1 / R2 资源，并更新 [`wrangler.toml`](./wrangler.toml) 中对应环境的资源绑定
-
-```bash
-npx wrangler d1 create <database-name>
-npx wrangler r2 bucket create <bucket-name>
-npx wrangler r2 bucket create <preview-bucket-name>
-```
-
-3. 初始化本地 D1 开发库
-
-```bash
-npm run db:migrate:local
-```
-
-如果你已经创建了远端数据库，但暂时不想等待 GitHub Actions 自动部署，也可以手动应用远端 migration：
-
-```bash
-npm run db:migrate:staging
-npm run db:migrate:production
-```
-
-`Deploy` workflow 会在部署前自动执行目标环境的 D1 migrations，因此正常情况下不需要手动初始化远端环境。
-
-4. 启动前端开发环境
-
-```bash
-npm run dev
-```
-
-5. 如需调试 Worker API
-
-```bash
-npm run dev:worker
-```
-
-## 测试与构建
-
-```bash
-npm test
-```
-
-构建前端产物：
-
-```bash
-npm run build
-```
-
-## 部署配置
-
-部署 workflow 需要以下 GitHub secrets：
-
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
-
-`CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，而不是 Global API Key。建议将权限收敛到目标 account / resources，并按实际 CI 动作授予最小权限。更完整说明见 [docs/deployment.md](./docs/deployment.md) 与 [docs/deployment.en.md](./docs/deployment.en.md)。
-
-可先在本地检查：
-
-```bash
-npm run github:secrets:check
-npm run github:variables:check
-```
-
-若本机已完成 `gh auth login`，也可以直接同步到指定仓库：
-
-```bash
-npm run github:secrets:sync -- owner/repo
-npm run github:variables:sync -- owner/repo
-```
-
-当前支持的 GitHub Variables：
-
-- `USAGE_LIMIT_D1_ROWS_READ_DAILY`
-- `USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY`
-- `USAGE_LIMIT_D1_STORAGE_GB`
-- `USAGE_LIMIT_R2_CLASS_A_MONTHLY`
-- `USAGE_LIMIT_R2_CLASS_B_MONTHLY`
-- `USAGE_LIMIT_R2_STORAGE_GB_MONTH`
-
-## 数据模型
-
-消息元数据保存在 D1：
-
-```sql
-messages (
-  id,
-  attachment_count,
-  total_size,
-  stored_bytes,
-  max_reads,
-  read_count,
-  created_at,
-  expires_at,
-  burned,
-  objects_deleted,
-  storage_projection_month
-)
-```
-
-用量统计保存在 D1：
-
-```sql
-usage_counters (
-  scope,
-  period_key,
-  metric,
-  value,
-  updated_at
-)
-
-usage_state (
-  key,
-  value,
-  updated_at
-)
-```
-
-密文对象保存在 R2：
-
-```text
-/messages/{id}/payload.bin
-/messages/{id}/files/{index}.bin
-```
-
-## 安全边界
+## 隐私与安全边界
 
 - 平台无法读取消息正文或附件明文
 - 平台不提供匿名保护
 - 平台不做附件安全扫描
-- 若多个接收者在焚毁前同时拉取了密文，他们都可能离线解密；这属于“GET 不销毁”模型下的已知边界
+- 接收者先获取密文，再请求一次性解密授权；服务端发放授权前会原子扣减剩余访问次数
+- 若多个接收者在焚毁前都已获取密文，他们仍可能在本地离线解密；这是当前访问模型的已知边界
+
+## 自建部署
+
+项目基于 Cloudflare Workers、D1 与 R2。若要自行部署，请直接参考部署文档：
+
+- 中文：[docs/deployment.md](./docs/deployment.md)
+- English: [docs/deployment.en.md](./docs/deployment.en.md)
