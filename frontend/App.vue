@@ -9,6 +9,7 @@ import {
   base64UrlDecode,
   clampReadLimit,
   decryptBytes,
+  deriveAccessKeyMaterial,
   decryptJsonValue,
   encryptAttachment,
   encryptBytes,
@@ -17,7 +18,6 @@ import {
   exportX25519PrivateKey,
   exportX25519PublicKey,
   formatBytes,
-  generateOpaqueId,
   generateX25519KeyPair,
   importX25519PrivateKey,
   importX25519PublicKey,
@@ -500,6 +500,54 @@ async function resolveRecipientPublicKey() {
   }
 }
 
+async function requestCreateBootstrap() {
+  const response = await fetch("/api/create-bootstrap", {
+    method: "POST",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  const result = await safeReadJson(response);
+  if (!response.ok) {
+    if (result.message) {
+      throw new Error(result.message);
+    }
+
+    throw createLocalizedError((currentText) => currentText.composer.errors.serverKeyBootstrapFailed);
+  }
+
+  if (typeof result.id !== "string" || typeof result.serverKeyShare !== "string") {
+    throw createLocalizedError((currentText) => currentText.composer.errors.serverKeyBootstrapFailed);
+  }
+
+  return result;
+}
+
+async function requestAccessKey(messageId) {
+  const response = await fetch(`/api/message/${messageId}/access-key`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  const result = await safeReadJson(response);
+  if (!response.ok) {
+    if (result.message) {
+      throw new Error(result.message);
+    }
+
+    throw createLocalizedError((currentText) => currentText.reader.errors.accessKeyFailed);
+  }
+
+  if (typeof result.serverKeyShare !== "string") {
+    throw createLocalizedError((currentText) => currentText.reader.errors.invalidAccessKey);
+  }
+
+  return result;
+}
+
 async function createMessage() {
   const validationError = validateDraft(composer.message, composer.files, text.value.composer.validation);
   if (validationError) {
@@ -511,11 +559,19 @@ async function createMessage() {
   shareLink.value = "";
 
   try {
-    const messageId = generateOpaqueId();
-    const masterKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+    setComposerStatus((currentText) => currentText.composer.requestingServerKey);
+
+    const { id: messageId, serverKeyShare } = await requestCreateBootstrap();
+    const serverKeyShareBytes = base64UrlDecode(serverKeyShare);
+    if (serverKeyShareBytes.byteLength !== 32) {
+      throw createLocalizedError((currentText) => currentText.composer.errors.serverKeyBootstrapFailed);
+    }
+
+    const localKeyShareBytes = crypto.getRandomValues(new Uint8Array(32));
+    const accessKeyMaterial = await deriveAccessKeyMaterial(localKeyShareBytes, serverKeyShareBytes, messageId);
     const maxReads = clampReadLimit(composer.maxReads);
     const totalFiles = composer.files.length;
-    const masterKey = base64UrlEncode(masterKeyBytes);
+    const localKeyShare = base64UrlEncode(localKeyShareBytes);
     const encryptionMode = isEnhancedEncryptionEnabled.value ? ENCRYPTION_MODE_ENHANCED : ENCRYPTION_MODE_STANDARD;
     const encryptedAttachments = [];
     let totalSize = 0;
@@ -551,7 +607,7 @@ async function createMessage() {
         const firstPass = await encryptBytes(await file.arrayBuffer(), sharedSecretBytes, messageId, `x25519:file:${index}`);
 
         setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
-        const secondPass = await encryptBytes(firstPass.ciphertext, masterKeyBytes, messageId, `file:${index}`);
+        const secondPass = await encryptBytes(firstPass.ciphertext, accessKeyMaterial, messageId, `file:${index}`);
         encryptedAttachments.push({
           index,
           iv: secondPass.iv,
@@ -581,7 +637,7 @@ async function createMessage() {
         const file = composer.files[index];
         totalSize += file.size;
         setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
-        encryptedAttachments.push(await encryptAttachment(file, index, masterKeyBytes, messageId));
+        encryptedAttachments.push(await encryptAttachment(file, index, accessKeyMaterial, messageId));
       }
 
       payloadPlaintext = {
@@ -592,10 +648,11 @@ async function createMessage() {
     }
 
     setComposerStatus((currentText) => currentText.composer.encryptMessage);
-    const payload = await encryptPayload(payloadPlaintext, masterKeyBytes, messageId);
+    const payload = await encryptPayload(payloadPlaintext, accessKeyMaterial, messageId);
 
     const metadata = {
       id: messageId,
+      serverKeyShare,
       encryptionMode,
       totalSize,
       expiresInSeconds: Number(composer.ttlSeconds),
@@ -630,7 +687,7 @@ async function createMessage() {
       throw createLocalizedError((currentText) => currentText.composer.errors.createFailed);
     }
 
-    shareLink.value = `${window.location.origin}/m/${messageId}#${masterKey}`;
+    shareLink.value = `${window.location.origin}/m/${messageId}#${localKeyShare}`;
     setComposerStatus((currentText) => currentText.composer.created(maxReads), "success");
   } catch (error) {
     setComposerStatus(
@@ -648,14 +705,25 @@ async function loadMessage() {
     reader.attachments = [];
     setReaderMessage("");
     const messageId = readMessageIdFromPath();
-    const masterKey = window.location.hash.slice(1);
+    const localKeyShare = window.location.hash.slice(1);
 
     if (!messageId) {
       throw createLocalizedError((currentText) => currentText.reader.errors.missingMessageId);
     }
 
-    if (!masterKey) {
+    if (!localKeyShare) {
       throw createLocalizedError((currentText) => currentText.reader.errors.missingDecryptionKey);
+    }
+
+    let localKeyShareBytes;
+    try {
+      localKeyShareBytes = base64UrlDecode(localKeyShare);
+    } catch {
+      throw createLocalizedError((currentText) => currentText.reader.errors.invalidDecryptionKey);
+    }
+
+    if (localKeyShareBytes.byteLength !== 32) {
+      throw createLocalizedError((currentText) => currentText.reader.errors.invalidDecryptionKey);
     }
 
     setReaderStatus((currentText) => currentText.reader.fetching);
@@ -676,17 +744,52 @@ async function loadMessage() {
 
     const encryptionMode = envelope.encryptionMode || ENCRYPTION_MODE_STANDARD;
     let readerPrivateKey = null;
+    const outerAttachmentEnvelopes = new Map((envelope.attachments || []).map((item) => [item.index, item]));
+    const encryptedAttachmentPayloads = new Map();
+
     if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
       setReaderStatus((currentText) => currentText.reader.selectPrivateKey);
       readerPrivateKey = await requestReaderPrivateKey();
+    }
+
+    if (outerAttachmentEnvelopes.size > 0) {
+      setReaderStatus((currentText) => currentText.reader.fetchingAttachments);
+
+      for (const attachment of envelope.attachments || []) {
+        const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`);
+        if (!fileResponse.ok) {
+          const errorBody = await safeReadJson(fileResponse);
+          if (errorBody.message) {
+            throw new Error(errorBody.message);
+          }
+
+          throw createLocalizedError((currentText) => currentText.reader.errors.fetchAttachmentFailed(`#${attachment.index}`));
+        }
+
+        encryptedAttachmentPayloads.set(attachment.index, new Uint8Array(await fileResponse.arrayBuffer()));
+      }
+    }
+
+    setReaderStatus((currentText) => currentText.reader.requestingAccessKey);
+    const accessKeyResult = await requestAccessKey(messageId);
+    const serverKeyShareBytes = base64UrlDecode(accessKeyResult.serverKeyShare);
+    if (serverKeyShareBytes.byteLength !== 32) {
+      throw createLocalizedError((currentText) => currentText.reader.errors.invalidAccessKey);
+    }
+
+    const accessKeyMaterial = await deriveAccessKeyMaterial(
+      localKeyShareBytes,
+      serverKeyShareBytes,
+      messageId
+    );
+
+    if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
       setReaderStatus((currentText) => currentText.reader.decryptingOuterMessage);
     } else {
       setReaderStatus((currentText) => currentText.reader.decryptingMessage);
     }
 
-    const masterKeyBytes = base64UrlDecode(masterKey);
-    const payload = await decryptJsonValue(envelope.payload.ciphertext, envelope.payload.iv, masterKeyBytes, messageId, "payload");
-    const outerAttachmentEnvelopes = new Map((envelope.attachments || []).map((item) => [item.index, item]));
+    const payload = await decryptJsonValue(envelope.payload.ciphertext, envelope.payload.iv, accessKeyMaterial, messageId, "payload");
     let messageText = payload.message || "";
     let attachmentMetadata = payload.attachments || [];
     let enhancedAttachmentEnvelopes = null;
@@ -730,25 +833,21 @@ async function loadMessage() {
         throw createLocalizedError((currentText) => currentText.reader.errors.missingAttachmentEnvelope(attachment.index));
       }
 
+      const encryptedAttachmentPayload = encryptedAttachmentPayloads.get(attachment.index);
+      if (!encryptedAttachmentPayload) {
+        throw createLocalizedError((currentText) => currentText.reader.errors.fetchAttachmentFailed(attachment.name));
+      }
+
       setReaderStatus((currentText) =>
         encryptionMode === ENCRYPTION_MODE_ENHANCED
           ? currentText.reader.decryptingOuterAttachment(attachment.name)
           : currentText.reader.decryptingAttachment(attachment.name)
       );
 
-      const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`);
-      if (!fileResponse.ok) {
-        const errorBody = await safeReadJson(fileResponse);
-        if (errorBody.message) {
-          throw new Error(errorBody.message);
-        }
-        throw createLocalizedError((currentText) => currentText.reader.errors.fetchAttachmentFailed(attachment.name));
-      }
-
       let decryptedBytes = await decryptBytes(
-        await fileResponse.arrayBuffer(),
+        encryptedAttachmentPayload,
         outerAttachmentEnvelope.iv,
-        masterKeyBytes,
+        accessKeyMaterial,
         messageId,
         `file:${attachment.index}`
       );
@@ -777,23 +876,10 @@ async function loadMessage() {
       });
     }
 
-    setReaderStatus((currentText) => currentText.reader.confirming);
-
-    const confirmResponse = await fetch("/api/confirm-read", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ id: messageId })
-    });
-
-    const confirmResult = await safeReadJson(confirmResponse);
-    if (!confirmResponse.ok) {
-      setReaderStatus(confirmResult.message || ((currentText) => currentText.reader.errors.confirmFailed), "warning");
-    } else if (confirmResult.burned) {
+    if (accessKeyResult.burned) {
       setReaderStatus((currentText) => currentText.reader.burned, "success");
     } else {
-      setReaderStatus((currentText) => currentText.reader.remaining(confirmResult.remainingReads), "success");
+      setReaderStatus((currentText) => currentText.reader.remaining(accessKeyResult.remainingReads), "success");
     }
 
     setReaderMessage(messageText);

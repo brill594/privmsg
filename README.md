@@ -5,16 +5,17 @@
 ## 当前实现范围
 
 - 浏览器端使用 `AES-GCM` + `HKDF(SHA-256)` 完成加密与解密
-- 主密钥只存在于 URL fragment：`/m/<id>#<master_key>`
+- 链接 fragment 只保存本地密钥 share：`/m/<id>#<local_key_share>`
 - 服务端 API：
+  - `POST /api/create-bootstrap`
   - `POST /api/create`
   - `GET /api/message/:id`
   - `GET /api/message/:id/file/:index`
-  - `POST /api/confirm-read`
+  - `POST /api/message/:id/access-key`
 - 附件总大小限制 `<= 50MB`
 - 发送端可设置最大访问次数，当前范围 `1 - 20`
 - 支持类型：`jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf`
-- 消息读取端先拉取并本地解密所有密文，成功后才调用 `confirm-read`
+- 消息读取端先拉取密文，再向服务端申请一次性解密授权；服务端下发 key share 前会原子扣减访问次数
 - 所有 API 响应都携带 `Cache-Control: no-store`
 - GitHub Actions CI / Deploy 工作流已接入
 - D1 schema 已切换到 `migrations/` 管理

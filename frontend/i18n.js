@@ -70,6 +70,7 @@ export const messages = {
       shareTitle: "分享链接",
       copyLink: "复制链接",
       initialStatus: "输入文本或附件后，浏览器会先完成本地加密，再上传密文。",
+      requestingServerKey: "正在向服务端申请本次加密所需的密钥 share…",
       encryptMessage: "正在本地加密消息正文…",
       encryptAttachment: (index, total, name) => `正在加密附件 ${index + 1}/${total}: ${name}`,
       uploading: "正在上传密文…",
@@ -117,6 +118,7 @@ export const messages = {
         invalidRecipientPublicKey: "接收方公钥无效，请检查格式后重试。"
       },
       errors: {
+        serverKeyBootstrapFailed: "无法获取服务端密钥 share。",
         createFailed: "创建失败。"
       }
     },
@@ -130,6 +132,8 @@ export const messages = {
       previewPlaceholder: "选择一个已解密附件进行预览。",
       initialStatus: "打开链接后会先获取密文，再在本地解密。",
       fetching: "正在获取密文…",
+      fetchingAttachments: "正在预取附件密文…",
+      requestingAccessKey: "正在向服务端申请本次解密授权…",
       decryptingMessage: "正在本地解密正文…",
       selectPrivateKey: "检测到增强加密，请先选择本地私钥文件。",
       decryptingOuterMessage: "正在解开外层一次性链接加密…",
@@ -137,7 +141,6 @@ export const messages = {
       decryptingAttachment: (name) => `正在解密附件: ${name}`,
       decryptingOuterAttachment: (name) => `正在解开附件外层加密: ${name}`,
       decryptingEnhancedAttachment: (name) => `正在执行附件 X25519 解密: ${name}`,
-      confirming: "正在确认焚毁…",
       burned: "消息已在本地解密，本次读取已达到访问上限，服务端已完成焚毁。",
       remaining: (count) => `消息已在本地解密，本次访问已确认，还剩 ${count} 次可读。`,
       unavailable: "无法显示消息内容。",
@@ -154,6 +157,7 @@ export const messages = {
       errors: {
         missingMessageId: "缺少消息 ID。",
         missingDecryptionKey: "缺少解密密钥。",
+        invalidDecryptionKey: "链接中的本地密钥 share 无效。",
         readFailed: "读取失败。",
         fetchAttachmentFailed: (name) => `无法获取附件: ${name}`,
         missingAttachmentEnvelope: (index) => `缺少附件 ${index} 的加密封装信息。`,
@@ -161,7 +165,8 @@ export const messages = {
         invalidEnhancedEnvelope: "增强加密封装信息无效。",
         privateKeyRequired: "未选择私钥文件，无法继续解密增强加密消息。",
         invalidPrivateKey: "私钥文件无效，请重新选择正确的 X25519 私钥文件。",
-        confirmFailed: "确认焚毁失败。",
+        accessKeyFailed: "申请解密授权失败。",
+        invalidAccessKey: "服务端返回的解密授权无效。",
         decryptFailed: "解密失败。"
       }
     },
@@ -178,7 +183,7 @@ export const messages = {
         {
           title: "免责声明",
           items: [
-            "平台无法读取消息正文、附件明文或链接 fragment 中的主密钥。",
+            "平台无法直接读取消息正文、附件明文或链接 fragment 中的本地密钥 share。",
             "平台不提供匿名保护，也不提供防截图、撤回缓存或防二次传播能力。",
             "平台不做附件安全扫描，不保证附件本身安全无害。"
           ]
@@ -196,7 +201,7 @@ export const messages = {
           items: [
             "附件总大小上限为 50MB，支持类型包括 jpg、png、webp、gif、mp4、webm、mov、txt、pdf。",
             "未读失效时间支持 1 小时到 7 天；访问次数支持 1 到 20 次。",
-            "只有成功解密后提交 confirm-read 才会扣减访问次数；普通获取密文不会扣减。",
+            "只有服务端发放一次解密授权时才会扣减访问次数；普通获取密文不会扣减。",
             "若在次数耗尽前链接被多人持有，多人都可能在额度内完成解密。"
           ]
         }
@@ -237,6 +242,7 @@ export const messages = {
       shareTitle: "Share link",
       copyLink: "Copy link",
       initialStatus: "Your browser encrypts the message locally before any ciphertext is uploaded.",
+      requestingServerKey: "Requesting the server-side key share for this message…",
       encryptMessage: "Encrypting message locally…",
       encryptAttachment: (index, total, name) => `Encrypting attachment ${index + 1}/${total}: ${name}`,
       uploading: "Uploading ciphertext…",
@@ -284,6 +290,7 @@ export const messages = {
         invalidRecipientPublicKey: "The recipient public key is invalid. Check the format and try again."
       },
       errors: {
+        serverKeyBootstrapFailed: "Unable to obtain the server key share.",
         createFailed: "Create failed."
       }
     },
@@ -297,6 +304,8 @@ export const messages = {
       previewPlaceholder: "Select a decrypted attachment to preview.",
       initialStatus: "The page fetches ciphertext first, then decrypts everything locally.",
       fetching: "Fetching ciphertext…",
+      fetchingAttachments: "Preloading attachment ciphertext…",
+      requestingAccessKey: "Requesting the server-side decryption authorization…",
       decryptingMessage: "Decrypting message locally…",
       selectPrivateKey: "Enhanced encryption detected. Choose the local private key file first.",
       decryptingOuterMessage: "Decrypting the outer one-time-link layer…",
@@ -304,7 +313,6 @@ export const messages = {
       decryptingAttachment: (name) => `Decrypting attachment: ${name}`,
       decryptingOuterAttachment: (name) => `Decrypting the outer attachment layer: ${name}`,
       decryptingEnhancedAttachment: (name) => `Decrypting the X25519 attachment layer: ${name}`,
-      confirming: "Confirming read…",
       burned: "The message was decrypted locally and the final allowed read has been consumed. The server has burned it.",
       remaining: (count) => `The message was decrypted locally. This access is confirmed, and ${count} read(s) remain.`,
       unavailable: "Unable to display the message.",
@@ -321,6 +329,7 @@ export const messages = {
       errors: {
         missingMessageId: "Missing message id.",
         missingDecryptionKey: "Missing decryption key.",
+        invalidDecryptionKey: "The local key share in the link is invalid.",
         readFailed: "Read failed.",
         fetchAttachmentFailed: (name) => `Unable to fetch attachment: ${name}`,
         missingAttachmentEnvelope: (index) => `Missing encrypted envelope for attachment ${index}.`,
@@ -328,7 +337,8 @@ export const messages = {
         invalidEnhancedEnvelope: "The enhanced-encryption envelope is invalid.",
         privateKeyRequired: "No private key file was selected, so the enhanced-encryption message cannot be decrypted.",
         invalidPrivateKey: "The private key file is invalid. Choose the correct X25519 private key file and try again.",
-        confirmFailed: "Confirm failed.",
+        accessKeyFailed: "Failed to request the decryption authorization.",
+        invalidAccessKey: "The server returned an invalid decryption authorization.",
         decryptFailed: "Decrypt failed."
       }
     },
@@ -345,7 +355,7 @@ export const messages = {
         {
           title: "Disclaimer",
           items: [
-            "The platform cannot read message plaintext, attachment plaintext, or the master key stored in the URL fragment.",
+            "The platform cannot directly read message plaintext, attachment plaintext, or the local key share stored in the URL fragment.",
             "The platform does not provide anonymity, screenshot prevention, cache revocation, or redistribution prevention.",
             "The platform does not scan attachments and cannot guarantee that attachments are safe."
           ]
@@ -363,7 +373,7 @@ export const messages = {
           items: [
             "Total attachment size is capped at 50MB. Supported types are jpg, png, webp, gif, mp4, webm, mov, txt, and pdf.",
             "Unread expiration ranges from 1 hour to 7 days. Access count ranges from 1 to 20 reads.",
-            "A read is only consumed after successful local decryption followed by confirm-read. Plain ciphertext fetches do not consume reads.",
+            "A read is only consumed when the server issues a decryption authorization. Plain ciphertext fetches do not consume reads.",
             "If multiple people hold the link before the read quota is exhausted, multiple recipients may decrypt it within the remaining quota."
           ]
         }

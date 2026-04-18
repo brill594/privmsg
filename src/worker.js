@@ -33,6 +33,12 @@ const ENHANCED_BOOTSTRAP = {
   note: "Generate key pairs locally. Never upload private keys."
 };
 
+const CREATE_BOOTSTRAP = {
+  version: "access-key-bootstrap-v1",
+  keyShareEncoding: "base64url-raw-32",
+  note: "Combine the local key share with the server-issued key share before deriving the outer encryption key."
+};
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -42,6 +48,10 @@ export default {
 
       if (url.pathname === "/api/create") {
         return await handleCreate(request, env);
+      }
+
+      if (url.pathname === "/api/create-bootstrap") {
+        return handleCreateBootstrap(request);
       }
 
       if (url.pathname === "/api/enhanced-encryption/bootstrap") {
@@ -58,8 +68,9 @@ export default {
         return await handleGetFile(fileMatch[1], Number(fileMatch[2]), env, ctx);
       }
 
-      if (url.pathname === "/api/confirm-read") {
-        return await handleConfirmRead(request, env);
+      const accessKeyMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})\/access-key$/);
+      if (accessKeyMatch) {
+        return await handleIssueAccessKey(request, accessKeyMatch[1], env);
       }
 
       if (url.pathname === "/" || url.pathname.startsWith("/m/")) {
@@ -119,7 +130,7 @@ async function handleCreate(request, env) {
     return json({ error: "invalid_request", message: validation.message }, validation.status);
   }
 
-  const { id, attachments, encryptionMode, totalSize, payload, expiresAt, maxReads } = validation.value;
+  const { id, attachments, encryptionMode, totalSize, payload, expiresAt, maxReads, serverKeyShare } = validation.value;
   const attachmentBuffers = [];
   let totalEncryptedSize = 0;
 
@@ -215,7 +226,10 @@ async function handleCreate(request, env) {
       index,
       iv,
       encryptedSize
-    }))
+    })),
+    access: {
+      serverKeyShare
+    }
   };
 
   try {
@@ -253,6 +267,18 @@ async function handleCreate(request, env) {
   );
 }
 
+function handleCreateBootstrap(request) {
+  if (request.method !== "POST") {
+    return methodNotAllowed(["POST"]);
+  }
+
+  return json({
+    id: generateOpaqueId(),
+    bootstrap: CREATE_BOOTSTRAP,
+    serverKeyShare: generateKeyShare()
+  });
+}
+
 async function handleGetMessage(id, env, ctx) {
   if (!isValidMessageId(id)) {
     return json({ error: "invalid_request", message: "Invalid message id" }, 400);
@@ -275,6 +301,7 @@ async function handleGetMessage(id, env, ctx) {
   }
 
   const payload = JSON.parse(await payloadObject.text());
+  const { access: _access, ...publicPayload } = payload;
   return json({
     id: message.id,
     encryptionMode: normalizeEncryptionMode(payload.encryptionMode),
@@ -285,7 +312,7 @@ async function handleGetMessage(id, env, ctx) {
     remainingReads: Math.max(0, message.maxReads - message.readCount),
     createdAt: message.createdAt,
     expiresAt: message.expiresAt,
-    ...payload
+    ...publicPayload
   });
 }
 
@@ -333,24 +360,11 @@ async function handleGetFile(id, index, env, ctx) {
   });
 }
 
-async function handleConfirmRead(request, env) {
+async function handleIssueAccessKey(request, id, env) {
   if (request.method !== "POST") {
     return methodNotAllowed(["POST"]);
   }
 
-  const contentType = request.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    return json({ error: "invalid_request", message: "Expected application/json" }, 400);
-  }
-
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "invalid_request", message: "Malformed JSON body" }, 400);
-  }
-
-  const id = body?.id;
   if (!isValidMessageId(id)) {
     return json({ error: "invalid_request", message: "Invalid message id" }, 400);
   }
@@ -362,7 +376,20 @@ async function handleConfirmRead(request, env) {
 
   if (isConsumed(message) || isExpired(message)) {
     await markBurnedAndCleanup(env, message);
-    return json({ ok: true, alreadyBurned: true, burned: true, remainingReads: 0 });
+    return json({ error: "gone", message: "Message has already been burned" }, 410);
+  }
+
+  const payloadObject = await env.BUCKET.get(messagePayloadKey(id));
+  if (!payloadObject) {
+    await markBurnedAndCleanup(env, message);
+    return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
+  }
+
+  const payload = JSON.parse(await payloadObject.text());
+  const serverKeyShare = payload?.access?.serverKeyShare;
+  if (!isValidKeyShare(serverKeyShare)) {
+    await markBurnedAndCleanup(env, message);
+    return json({ error: "gone", message: "Message access key is unavailable" }, 410);
   }
 
   const updateResult = await env.DB.prepare(
@@ -389,7 +416,7 @@ async function handleConfirmRead(request, env) {
 
     if (isConsumed(latestMessage) || isExpired(latestMessage)) {
       await markBurnedAndCleanup(env, latestMessage);
-      return json({ ok: true, alreadyBurned: true, burned: true, remainingReads: 0 });
+      return json({ error: "gone", message: "Message has already been burned" }, 410);
     }
   }
 
@@ -405,11 +432,11 @@ async function handleConfirmRead(request, env) {
 
   return json({
     ok: true,
-    alreadyBurned: false,
     burned: shouldBurn,
     maxReads: updatedMessage.maxReads,
     readCount: updatedMessage.readCount,
-    remainingReads: Math.max(0, updatedMessage.maxReads - updatedMessage.readCount)
+    remainingReads: Math.max(0, updatedMessage.maxReads - updatedMessage.readCount),
+    serverKeyShare
   });
 }
 
@@ -464,6 +491,11 @@ function validateCreateMetadata(metadata) {
     return invalid("Invalid encryption mode");
   }
 
+  const serverKeyShare = metadata.serverKeyShare;
+  if (!isValidKeyShare(serverKeyShare)) {
+    return invalid("Invalid server key share");
+  }
+
   const rawAttachments = Array.isArray(metadata.attachments) ? metadata.attachments : [];
   const attachments = [];
 
@@ -512,7 +544,8 @@ function validateCreateMetadata(metadata) {
       attachments,
       totalSize,
       maxReads,
-      expiresAt
+      expiresAt,
+      serverKeyShare
     }
   };
 }
@@ -580,4 +613,26 @@ function messagePayloadKey(id) {
 
 function messageAttachmentKey(id, index) {
   return `messages/${id}/files/${index}.bin`;
+}
+
+function generateOpaqueId() {
+  return base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+function generateKeyShare() {
+  return base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+function isValidKeyShare(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function base64UrlEncode(bytes) {
+  let binary = "";
+
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }

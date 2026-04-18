@@ -181,6 +181,26 @@ export async function deriveAesKey(masterKeyBytes, messageId, purpose, usages) {
   );
 }
 
+export async function deriveAccessKeyMaterial(localKeyShareBytes, serverKeyShareBytes, messageId) {
+  const combinedKeyMaterial = new Uint8Array(localKeyShareBytes.byteLength + serverKeyShareBytes.byteLength);
+  combinedKeyMaterial.set(localKeyShareBytes, 0);
+  combinedKeyMaterial.set(serverKeyShareBytes, localKeyShareBytes.byteLength);
+
+  const hkdfKey = await crypto.subtle.importKey("raw", combinedKeyMaterial, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: textEncoder.encode(messageId),
+        info: textEncoder.encode("privmsg:access-key:v1")
+      },
+      hkdfKey,
+      256
+    )
+  );
+}
+
 export function generateOpaqueId() {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
 }

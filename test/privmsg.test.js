@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  deriveAccessKeyMaterial,
   decryptBytes,
   decryptJsonValue,
   deriveX25519SharedSecret,
+  base64UrlDecode,
+  base64UrlEncode,
   encryptBytes,
   encryptJsonValue,
   exportX25519PrivateKey,
@@ -50,4 +53,16 @@ test("round-trips enhanced-encryption helpers with X25519", async () => {
   const decryptedBytes = await decryptBytes(encryptedBytes.ciphertext, encryptedBytes.iv, recipientSecret, messageId, "x25519:file:0");
 
   assert.equal(new TextDecoder().decode(decryptedBytes), "top secret attachment");
+});
+
+test("derives stable outer key material from local and server key shares", async () => {
+  const messageId = "test-message-id-0123456789";
+  const localKeyShare = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const serverKeyShare = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+
+  const first = await deriveAccessKeyMaterial(base64UrlDecode(localKeyShare), base64UrlDecode(serverKeyShare), messageId);
+  const second = await deriveAccessKeyMaterial(base64UrlDecode(localKeyShare), base64UrlDecode(serverKeyShare), messageId);
+
+  assert.equal(first.byteLength, 32);
+  assert.deepEqual(Array.from(first), Array.from(second));
 });
