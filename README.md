@@ -1,6 +1,13 @@
 # privmsg
 
+中文 | [English](./README.en.md)
+
 一个与 PRD 对齐的 MVP：基于 Vue 构建的纯 Web 前端，客户端加密、服务端零知识、支持文本与多附件，并支持可配置访问次数限制的阅后即焚消息服务。
+
+相关文档：
+
+- 部署说明（中文）：[docs/deployment.md](./docs/deployment.md)
+- Deployment guide (English): [docs/deployment.en.md](./docs/deployment.en.md)
 
 ## 当前实现范围
 
@@ -18,7 +25,7 @@
 - 消息读取端先拉取密文，再向服务端申请一次性解密授权；服务端下发 key share 前会原子扣减访问次数
 - 所有 API 响应都携带 `Cache-Control: no-store`
 - GitHub Actions CI / Deploy 工作流已接入
-- D1 schema 已切换到 `migrations/` 管理
+- D1 schema 已切换到 [`migrations/`](./migrations/) 管理
 - 提供 GitHub Secrets / Variables 本地检查与同步脚本
 - 固定 Node `22.22.2` 与 Wrangler `4.83.0`
 - 前端已切换为 `Vue 3 + Vite`
@@ -30,23 +37,23 @@
 - 真正的 PDF.js 预览：当前版本先用隔离 iframe 承载 PDF 预览
 - IP 限流 / 创建频率限制
 - 定时清理已过期但尚未读取的对象
-- 更完整的构建一致性校验（例如锁定 wrangler / node 版本并附带发布 hash）
+- 更完整的构建一致性校验，例如锁定 wrangler / node 版本并附带发布 hash
 
 ## 本地启动
 
-1. 使用 [`.nvmrc`](/Users/brilliant/repo/privmsg/.nvmrc) 切到固定 Node 版本，然后安装依赖
+1. 使用 [`.nvmrc`](./.nvmrc) 切到固定 Node 版本，然后安装依赖
 
 ```bash
 nvm use
 npm install
 ```
 
-2. 创建 D1 / R2 资源，并把真实 ID 写入 [wrangler.toml](/Users/brilliant/repo/privmsg/wrangler.toml)
+2. 创建自己的 D1 / R2 资源，并更新 [`wrangler.toml`](./wrangler.toml) 中对应环境的资源绑定
 
 ```bash
-npx wrangler d1 create privmsg
-npx wrangler r2 bucket create privmsg-payloads
-npx wrangler r2 bucket create privmsg-payloads-preview
+npx wrangler d1 create <database-name>
+npx wrangler r2 bucket create <bucket-name>
+npx wrangler r2 bucket create <preview-bucket-name>
 ```
 
 3. 初始化本地 D1 开发库
@@ -55,14 +62,14 @@ npx wrangler r2 bucket create privmsg-payloads-preview
 npm run db:migrate:local
 ```
 
-如果你新建了远端数据库，但暂时不想等 GitHub Actions 自动部署，也可以手动对远端环境补 migration：
+如果你已经创建了远端数据库，但暂时不想等待 GitHub Actions 自动部署，也可以手动应用远端 migration：
 
 ```bash
 npm run db:migrate:staging
 npm run db:migrate:production
 ```
 
-`Deploy` workflow 现在会在部署前自动执行目标环境的 D1 migrations，所以正常情况下不再需要手动执行初始化 SQL。
+`Deploy` workflow 会在部署前自动执行目标环境的 D1 migrations，因此正常情况下不需要手动初始化远端环境。
 
 4. 启动前端开发环境
 
@@ -76,7 +83,7 @@ npm run dev
 npm run dev:worker
 ```
 
-## 测试
+## 测试与构建
 
 ```bash
 npm test
@@ -88,14 +95,14 @@ npm test
 npm run build
 ```
 
-## GitHub Secrets
+## 部署配置
 
-部署 workflow 需要以下 secrets：
+部署 workflow 需要以下 GitHub secrets：
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-其中 `CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，不是 Global API Key。当前仓库部署已验证需要至少 `Account -> Workers Scripts Write`、`Account -> Workers R2 Storage Read`、`Account -> D1 Write`，并将资源范围限制在目标 account。更完整说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
+`CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，而不是 Global API Key。建议将权限收敛到目标 account / resources，并按实际 CI 动作授予最小权限。更完整说明见 [docs/deployment.md](./docs/deployment.md) 与 [docs/deployment.en.md](./docs/deployment.en.md)。
 
 可先在本地检查：
 
@@ -111,7 +118,7 @@ npm run github:secrets:sync -- owner/repo
 npm run github:variables:sync -- owner/repo
 ```
 
-其中 GitHub Variables 用于配置非敏感的用量上限，当前支持：
+当前支持的 GitHub Variables：
 
 - `USAGE_LIMIT_D1_ROWS_READ_DAILY`
 - `USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY`
@@ -119,8 +126,6 @@ npm run github:variables:sync -- owner/repo
 - `USAGE_LIMIT_R2_CLASS_A_MONTHLY`
 - `USAGE_LIMIT_R2_CLASS_B_MONTHLY`
 - `USAGE_LIMIT_R2_STORAGE_GB_MONTH`
-
-更多说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
 
 ## 数据模型
 

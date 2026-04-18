@@ -5,7 +5,7 @@ zero_knowledge_burn_message_prd.md
 dist/
 public/build-manifest.json
 coverage/
-
+.claude
 # Cloudflare local state
 .wrangler/
 
