@@ -19,9 +19,11 @@
 - 所有 API 响应都携带 `Cache-Control: no-store`
 - GitHub Actions CI / Deploy 工作流已接入
 - D1 schema 已切换到 `migrations/` 管理
-- 提供 GitHub Secrets 本地检查与同步脚本
+- 提供 GitHub Secrets / Variables 本地检查与同步脚本
 - 固定 Node `22.22.2` 与 Wrangler `4.83.0`
 - 前端已切换为 `Vue 3 + Vite`
+- 增加 D1 / R2 用量统计与限额保护，支持通过 GitHub Variables 为 `staging` / `production` 分别配置阈值
+- 提供 `GET /api/usage` 查看当前 D1 / R2 统计值、窗口与已配置限额
 
 ## 还未补齐的 PRD 项
 
@@ -99,13 +101,24 @@ npm run build
 
 ```bash
 npm run github:secrets:check
+npm run github:variables:check
 ```
 
 若本机已完成 `gh auth login`，也可以直接同步到指定仓库：
 
 ```bash
 npm run github:secrets:sync -- owner/repo
+npm run github:variables:sync -- owner/repo
 ```
+
+其中 GitHub Variables 用于配置非敏感的用量上限，当前支持：
+
+- `USAGE_LIMIT_D1_ROWS_READ_DAILY`
+- `USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY`
+- `USAGE_LIMIT_D1_STORAGE_GB`
+- `USAGE_LIMIT_R2_CLASS_A_MONTHLY`
+- `USAGE_LIMIT_R2_CLASS_B_MONTHLY`
+- `USAGE_LIMIT_R2_STORAGE_GB_MONTH`
 
 更多说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
 
@@ -118,11 +131,32 @@ messages (
   id,
   attachment_count,
   total_size,
+  stored_bytes,
   max_reads,
   read_count,
   created_at,
   expires_at,
-  burned
+  burned,
+  objects_deleted,
+  storage_projection_month
+)
+```
+
+用量统计保存在 D1：
+
+```sql
+usage_counters (
+  scope,
+  period_key,
+  metric,
+  value,
+  updated_at
+)
+
+usage_state (
+  key,
+  value,
+  updated_at
 )
 ```
 

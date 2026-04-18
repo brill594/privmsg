@@ -20,7 +20,9 @@
     "build:manifest": "node scripts/build-manifest.mjs",
     "ci:verify": "npm test && npm run build",
     "github:secrets:check": "node scripts/github-secrets.mjs check",
-    "github:secrets:sync": "node scripts/github-secrets.mjs sync"
+    "github:secrets:sync": "node scripts/github-secrets.mjs sync",
+    "github:variables:check": "node scripts/github-variables.mjs check",
+    "github:variables:sync": "node scripts/github-variables.mjs sync"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",

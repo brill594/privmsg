@@ -6,3 +6,18 @@
 # Scope the token to the target Cloudflare account only.
 CLOUDFLARE_ACCOUNT_ID="replace-with-cloudflare-account-id"
 CLOUDFLARE_API_TOKEN="replace-with-cloudflare-api-token"
+
+# Optional usage guardrails. Keep them aligned with your Cloudflare plan or a stricter internal budget.
+# For Workers Free as of 2026-04, Cloudflare documents:
+# D1 rows read/day = 5000000
+# D1 rows written/day = 100000
+# D1 storage = 5 GB
+# R2 Class A/month = 1000000
+# R2 Class B/month = 10000000
+# R2 storage = 10 GB-month
+USAGE_LIMIT_D1_ROWS_READ_DAILY="5000000"
+USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY="100000"
+USAGE_LIMIT_D1_STORAGE_GB="5"
+USAGE_LIMIT_R2_CLASS_A_MONTHLY="1000000"
+USAGE_LIMIT_R2_CLASS_B_MONTHLY="10000000"
+USAGE_LIMIT_R2_STORAGE_GB_MONTH="10"

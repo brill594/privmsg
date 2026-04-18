@@ -11,6 +11,26 @@ import {
   isValidMessageId,
   normalizeEncryptionMode
 } from "./shared.js";
+import {
+  USAGE_COUNTER_METRICS,
+  USAGE_COUNTER_SCOPE_DAY,
+  USAGE_COUNTER_SCOPE_MONTH,
+  USAGE_STATE_KEYS,
+  addR2ClassA,
+  addR2ClassB,
+  addR2StorageBytes,
+  addR2StorageMbSeconds,
+  buildUsageSummary,
+  calculateR2StorageMbSeconds,
+  createUsageRecorder,
+  evaluateUsage,
+  getUsageWindow,
+  hasAnyUsageLimit,
+  hasUsageDeltas,
+  mbSecondsToGbMonth,
+  parseUsageLimits,
+  recordD1Meta
+} from "./usage.js";
 
 const JSON_HEADERS = {
   "Cache-Control": "no-store",
@@ -48,7 +68,7 @@ export default {
       const url = new URL(request.url);
 
       if (url.pathname === "/api/create") {
-        return await handleCreate(request, env);
+        return await withUsageTracking(env, (usage) => handleCreate(request, env, usage));
       }
 
       if (url.pathname === "/api/create-bootstrap") {
@@ -59,19 +79,23 @@ export default {
         return handleEnhancedBootstrap();
       }
 
+      if (url.pathname === "/api/usage") {
+        return await handleUsage(request, env);
+      }
+
       const messageMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})$/);
       if (messageMatch) {
-        return await handleGetMessage(request, messageMatch[1], env, ctx);
+        return await withUsageTracking(env, (usage) => handleGetMessage(request, messageMatch[1], env, ctx, usage));
       }
 
       const fileMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})\/file\/(\d+)$/);
       if (fileMatch) {
-        return await handleGetFile(request, fileMatch[1], Number(fileMatch[2]), env, ctx);
+        return await withUsageTracking(env, (usage) => handleGetFile(request, fileMatch[1], Number(fileMatch[2]), env, ctx, usage));
       }
 
       const accessKeyMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})\/access-key$/);
       if (accessKeyMatch) {
-        return await handleIssueAccessKey(request, accessKeyMatch[1], env);
+        return await withUsageTracking(env, (usage) => handleIssueAccessKey(request, accessKeyMatch[1], env, usage));
       }
 
       if (url.pathname === "/" || url.pathname.startsWith("/m/")) {
@@ -102,7 +126,7 @@ function assertBindings(env) {
   }
 }
 
-async function handleCreate(request, env) {
+async function handleCreate(request, env, usage) {
   if (request.method !== "POST") {
     return methodNotAllowed(["POST"]);
   }
@@ -185,41 +209,6 @@ async function handleCreate(request, env) {
     );
   }
 
-  const nowIso = new Date().toISOString();
-  const messageRecord = {
-    id,
-    attachmentCount: attachments.length,
-    totalSize,
-    maxReads,
-    readCount: 0,
-    createdAt: nowIso,
-    expiresAt
-  };
-
-  try {
-    await env.DB.prepare(
-      `
-        INSERT INTO messages (id, attachment_count, total_size, max_reads, read_count, created_at, expires_at, burned)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
-      `
-    )
-      .bind(
-        messageRecord.id,
-        messageRecord.attachmentCount,
-        messageRecord.totalSize,
-        messageRecord.maxReads,
-        messageRecord.readCount,
-        messageRecord.createdAt,
-        messageRecord.expiresAt
-      )
-      .run();
-  } catch (error) {
-    if (String(error).includes("UNIQUE")) {
-      return json({ error: "conflict", message: "Message id already exists" }, 409);
-    }
-    throw error;
-  }
-
   const access = {
     serverKeyShare
   };
@@ -238,24 +227,101 @@ async function handleCreate(request, env) {
     })),
     access
   };
+  const payloadText = JSON.stringify(payloadObject);
+  const storedBytes = new TextEncoder().encode(payloadText).byteLength + totalEncryptedSize;
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const usageLimitError = await ensureUsageBudget(
+    env,
+    {
+      d1RowsWrittenDaily: 1,
+      d1StorageBytes: estimateMessageMetadataBytes(id, expiresAt),
+      r2ClassAOpsMonthly: attachments.length + 1,
+      r2StorageBytes: storedBytes,
+      r2StorageGbMonth: mbSecondsToGbMonth(calculateR2StorageMbSeconds(storedBytes, now.getTime(), projectedR2StorageEndMs(expiresAt, now)))
+    },
+    now
+  );
+
+  if (usageLimitError) {
+    return usageLimitError;
+  }
+
+  const messageRecord = {
+    id,
+    attachmentCount: attachments.length,
+    totalSize,
+    storedBytes,
+    maxReads,
+    readCount: 0,
+    createdAt: nowIso,
+    expiresAt,
+    storageProjectionMonth: getUsageWindow(now).monthKey
+  };
 
   try {
-    await env.BUCKET.put(messagePayloadKey(id), JSON.stringify(payloadObject), {
+    await d1Run(
+      env,
+      usage,
+      `
+        INSERT INTO messages (
+          id,
+          attachment_count,
+          total_size,
+          stored_bytes,
+          max_reads,
+          read_count,
+          created_at,
+          expires_at,
+          burned,
+          objects_deleted,
+          storage_projection_month
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 0, ?9)
+      `,
+      messageRecord.id,
+      messageRecord.attachmentCount,
+      messageRecord.totalSize,
+      messageRecord.storedBytes,
+      messageRecord.maxReads,
+      messageRecord.readCount,
+      messageRecord.createdAt,
+      messageRecord.expiresAt,
+      messageRecord.storageProjectionMonth
+    );
+  } catch (error) {
+    if (String(error).includes("UNIQUE")) {
+      return json({ error: "conflict", message: "Message id already exists" }, 409);
+    }
+    throw error;
+  }
+
+  try {
+    await putObject(env, usage, messagePayloadKey(id), payloadText, {
       httpMetadata: {
         contentType: "application/json"
       }
     });
 
     for (const attachment of attachmentBuffers) {
-      await env.BUCKET.put(messageAttachmentKey(id, attachment.index), attachment.data, {
+      await putObject(env, usage, messageAttachmentKey(id, attachment.index), attachment.data, {
         httpMetadata: {
           contentType: "application/octet-stream"
         }
       });
     }
+    addR2StorageBytes(usage, storedBytes);
+    addR2StorageMbSeconds(
+      usage,
+      calculateR2StorageMbSeconds(storedBytes, now.getTime(), projectedR2StorageEndMs(expiresAt, now))
+    );
   } catch (error) {
-    await env.DB.prepare("DELETE FROM messages WHERE id = ?1").bind(id).run();
-    await cleanupMessageObjects(env, id, attachments.length);
+    await d1Run(env, usage, "DELETE FROM messages WHERE id = ?1", id);
+    await cleanupMessageObjects(env, null, {
+      id,
+      attachmentCount: attachments.length,
+      storedBytes
+    });
     throw error;
   }
 
@@ -286,12 +352,33 @@ function handleCreateBootstrap(request) {
   });
 }
 
-async function handleGetMessage(request, id, env, ctx) {
+async function handleUsage(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed(["GET"]);
+  }
+
+  const now = new Date();
+  const snapshot = await getUsageSnapshot(env, now);
+  return json(buildUsageSummary(snapshot, parseUsageLimits(env), now));
+}
+
+async function handleGetMessage(request, id, env, ctx, usage) {
   if (!isValidMessageId(id)) {
     return json({ error: "invalid_request", message: "Invalid message id" }, 400);
   }
 
-  const message = await getMessageRecord(env, id);
+  const usageLimitError = await ensureUsageBudget(
+    env,
+    {
+      d1RowsReadDaily: 1,
+      r2ClassBOpsMonthly: 1
+    }
+  );
+  if (usageLimitError) {
+    return usageLimitError;
+  }
+
+  const message = await getMessageRecord(env, id, usage);
   if (!message) {
     return json({ error: "not_found", message: "Message not found" }, 404);
   }
@@ -301,7 +388,7 @@ async function handleGetMessage(request, id, env, ctx) {
     return json({ error: "gone", message: "Message has already been burned" }, 410);
   }
 
-  const payload = await getStoredPayload(env, id);
+  const payload = await getStoredPayload(env, id, usage);
   if (!payload) {
     ctx.waitUntil(markBurnedAndCleanup(env, message));
     return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
@@ -337,12 +424,23 @@ function handleEnhancedBootstrap() {
   });
 }
 
-async function handleGetFile(request, id, index, env, ctx) {
+async function handleGetFile(request, id, index, env, ctx, usage) {
   if (!isValidMessageId(id) || !Number.isInteger(index) || index < 0) {
     return json({ error: "invalid_request", message: "Invalid attachment request" }, 400);
   }
 
-  const message = await getMessageRecord(env, id);
+  const usageLimitError = await ensureUsageBudget(
+    env,
+    {
+      d1RowsReadDaily: 1,
+      r2ClassBOpsMonthly: 2
+    }
+  );
+  if (usageLimitError) {
+    return usageLimitError;
+  }
+
+  const message = await getMessageRecord(env, id, usage);
   if (!message) {
     return json({ error: "not_found", message: "Message not found" }, 404);
   }
@@ -352,7 +450,7 @@ async function handleGetFile(request, id, index, env, ctx) {
     return json({ error: "gone", message: "Message has already been burned" }, 410);
   }
 
-  const payload = await getStoredPayload(env, id);
+  const payload = await getStoredPayload(env, id, usage);
   if (!payload) {
     ctx.waitUntil(markBurnedAndCleanup(env, message));
     return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
@@ -367,7 +465,7 @@ async function handleGetFile(request, id, index, env, ctx) {
     return json({ error: "not_found", message: "Attachment not found" }, 404);
   }
 
-  const attachment = await env.BUCKET.get(messageAttachmentKey(id, index));
+  const attachment = await getObject(env, usage, messageAttachmentKey(id, index));
   if (!attachment) {
     return json({ error: "not_found", message: "Attachment not found" }, 404);
   }
@@ -382,7 +480,7 @@ async function handleGetFile(request, id, index, env, ctx) {
   });
 }
 
-async function handleIssueAccessKey(request, id, env) {
+async function handleIssueAccessKey(request, id, env, usage) {
   if (request.method !== "POST") {
     return methodNotAllowed(["POST"]);
   }
@@ -391,7 +489,19 @@ async function handleIssueAccessKey(request, id, env) {
     return json({ error: "invalid_request", message: "Invalid message id" }, 400);
   }
 
-  const message = await getMessageRecord(env, id);
+  const usageLimitError = await ensureUsageBudget(
+    env,
+    {
+      d1RowsReadDaily: 3,
+      d1RowsWrittenDaily: 1,
+      r2ClassBOpsMonthly: 1
+    }
+  );
+  if (usageLimitError) {
+    return usageLimitError;
+  }
+
+  const message = await getMessageRecord(env, id, usage);
   if (!message) {
     return json({ error: "not_found", message: "Message not found" }, 404);
   }
@@ -401,7 +511,7 @@ async function handleIssueAccessKey(request, id, env) {
     return json({ error: "gone", message: "Message has already been burned" }, 410);
   }
 
-  const payload = await getStoredPayload(env, id);
+  const payload = await getStoredPayload(env, id, usage);
   if (!payload) {
     await markBurnedAndCleanup(env, message);
     return json({ error: "gone", message: "Encrypted payload is unavailable" }, 410);
@@ -418,7 +528,9 @@ async function handleIssueAccessKey(request, id, env) {
     return json({ error: "gone", message: "Message access key is unavailable" }, 410);
   }
 
-  const updateResult = await env.DB.prepare(
+  const updateResult = await d1Run(
+    env,
+    usage,
     `
       UPDATE messages
       SET
@@ -429,13 +541,13 @@ async function handleIssueAccessKey(request, id, env) {
         AND burned = 0
         AND expires_at > ?2
         AND read_count < max_reads
-    `
-  )
-    .bind(id, new Date().toISOString())
-    .run();
+    `,
+    id,
+    new Date().toISOString()
+  );
 
   if ((updateResult.meta?.changes || 0) === 0) {
-    const latestMessage = await getMessageRecord(env, id);
+    const latestMessage = await getMessageRecord(env, id, usage);
     if (!latestMessage) {
       return json({ error: "not_found", message: "Message not found" }, 404);
     }
@@ -446,14 +558,14 @@ async function handleIssueAccessKey(request, id, env) {
     }
   }
 
-  const updatedMessage = await getMessageRecord(env, id);
+  const updatedMessage = await getMessageRecord(env, id, usage);
   if (!updatedMessage) {
     return json({ error: "not_found", message: "Message not found" }, 404);
   }
 
   const shouldBurn = isConsumed(updatedMessage);
   if (shouldBurn) {
-    await cleanupMessageObjects(env, id, updatedMessage.attachmentCount);
+    await cleanupMessageObjects(env, usage, updatedMessage);
   }
 
   return json({
@@ -466,31 +578,35 @@ async function handleIssueAccessKey(request, id, env) {
   });
 }
 
-async function getMessageRecord(env, id) {
-  const row = await env.DB.prepare(
+async function getMessageRecord(env, id, usage = null) {
+  const row = await d1First(
+    env,
+    usage,
     `
       SELECT
         id,
         attachment_count AS attachmentCount,
         total_size AS totalSize,
+        stored_bytes AS storedBytes,
         max_reads AS maxReads,
         read_count AS readCount,
         created_at AS createdAt,
         expires_at AS expiresAt,
-        burned
+        burned,
+        objects_deleted AS objectsDeleted,
+        storage_projection_month AS storageProjectionMonth
       FROM messages
       WHERE id = ?1
       LIMIT 1
-    `
-  )
-    .bind(id)
-    .first();
+    `,
+    id
+  );
 
   return row || null;
 }
 
-async function getStoredPayload(env, id) {
-  const payloadObject = await env.BUCKET.get(messagePayloadKey(id));
+async function getStoredPayload(env, id, usage = null) {
+  const payloadObject = await getObject(env, usage, messagePayloadKey(id));
   if (!payloadObject) {
     return null;
   }
@@ -710,18 +826,366 @@ function isBurnedOrExpired(message) {
 }
 
 async function markBurnedAndCleanup(env, message) {
-  await env.DB.prepare("UPDATE messages SET burned = 1 WHERE id = ?1").bind(message.id).run();
-  await cleanupMessageObjects(env, message.id, message.attachmentCount);
+  const usage = createUsageRecorder();
+
+  try {
+    await d1Run(env, usage, "UPDATE messages SET burned = 1 WHERE id = ?1", message.id);
+    await cleanupMessageObjects(env, usage, message);
+  } finally {
+    await commitUsage(env, usage);
+  }
 }
 
-async function cleanupMessageObjects(env, id, attachmentCount) {
+async function cleanupMessageObjects(env, usage, message) {
+  const id = message.id;
+  const attachmentCount = Number(message.attachmentCount) || 0;
   const deletions = [env.BUCKET.delete(messagePayloadKey(id))];
+
+  if ((Number(message.objectsDeleted) || 0) === 0) {
+    const result = await d1Run(
+      env,
+      usage,
+      "UPDATE messages SET objects_deleted = 1 WHERE id = ?1 AND objects_deleted = 0",
+      id
+    );
+
+    if ((result.meta?.changes || 0) > 0) {
+      if (usage) {
+        const storedBytes = Number(message.storedBytes) || 0;
+        addR2StorageBytes(usage, -storedBytes);
+
+        if (message.storageProjectionMonth === getUsageWindow(new Date()).monthKey) {
+          addR2StorageMbSeconds(
+            usage,
+            -calculateR2StorageMbSeconds(storedBytes, Date.now(), projectedR2StorageEndMs(message.expiresAt))
+          );
+        }
+      }
+
+      message.objectsDeleted = 1;
+    }
+  }
 
   for (let index = 0; index < attachmentCount; index += 1) {
     deletions.push(env.BUCKET.delete(messageAttachmentKey(id, index)));
   }
 
   await Promise.allSettled(deletions);
+}
+
+async function withUsageTracking(env, operation) {
+  const usage = createUsageRecorder();
+
+  try {
+    return await operation(usage);
+  } finally {
+    await commitUsage(env, usage);
+  }
+}
+
+async function ensureUsageBudget(env, projectedUsage, now = new Date()) {
+  const limits = parseUsageLimits(env);
+  if (!hasAnyUsageLimit(limits)) {
+    return null;
+  }
+
+  const snapshot = await getUsageSnapshot(env, now);
+  const evaluation = evaluateUsage(snapshot, limits, projectedUsage);
+
+  if (evaluation.breaches.length === 0) {
+    return null;
+  }
+
+  return json(
+    {
+      error: "usage_limit_exceeded",
+      message: "Configured usage limit exceeded",
+      breaches: evaluation.breaches,
+      usage: buildUsageSummary(snapshot, limits, now)
+    },
+    503
+  );
+}
+
+async function getUsageSnapshot(env, now = new Date()) {
+  await ensureCurrentMonthStorageProjection(env, now);
+
+  const { dayKey, monthKey } = getUsageWindow(now);
+  const countersResult = await env.DB.prepare(
+    `
+      SELECT scope, period_key AS periodKey, metric, value
+      FROM usage_counters
+      WHERE (scope = ?1 AND period_key = ?2) OR (scope = ?3 AND period_key = ?4)
+    `
+  )
+    .bind(USAGE_COUNTER_SCOPE_DAY, dayKey, USAGE_COUNTER_SCOPE_MONTH, monthKey)
+    .all();
+
+  const statesResult = await env.DB.prepare(
+    `
+      SELECT key, value
+      FROM usage_state
+      WHERE key = ?1 OR key = ?2
+    `
+  )
+    .bind(USAGE_STATE_KEYS.D1_STORAGE_BYTES, USAGE_STATE_KEYS.R2_STORAGE_BYTES)
+    .all();
+
+  const snapshot = {
+    d1RowsReadDaily: 0,
+    d1RowsWrittenDaily: 0,
+    d1StorageBytes: 0,
+    r2ClassAOpsMonthly: 0,
+    r2ClassBOpsMonthly: 0,
+    r2StorageBytes: 0,
+    r2StorageGbMonth: 0
+  };
+
+  for (const row of countersResult.results || []) {
+    if (row.scope === USAGE_COUNTER_SCOPE_DAY && row.metric === USAGE_COUNTER_METRICS.D1_ROWS_READ) {
+      snapshot.d1RowsReadDaily = Number(row.value) || 0;
+      continue;
+    }
+
+    if (row.scope === USAGE_COUNTER_SCOPE_DAY && row.metric === USAGE_COUNTER_METRICS.D1_ROWS_WRITTEN) {
+      snapshot.d1RowsWrittenDaily = Number(row.value) || 0;
+      continue;
+    }
+
+    if (row.scope === USAGE_COUNTER_SCOPE_MONTH && row.metric === USAGE_COUNTER_METRICS.R2_CLASS_A_OPS) {
+      snapshot.r2ClassAOpsMonthly = Number(row.value) || 0;
+      continue;
+    }
+
+    if (row.scope === USAGE_COUNTER_SCOPE_MONTH && row.metric === USAGE_COUNTER_METRICS.R2_CLASS_B_OPS) {
+      snapshot.r2ClassBOpsMonthly = Number(row.value) || 0;
+      continue;
+    }
+
+    if (row.scope === USAGE_COUNTER_SCOPE_MONTH && row.metric === USAGE_COUNTER_METRICS.R2_STORAGE_MB_SECONDS) {
+      snapshot.r2StorageGbMonth = mbSecondsToGbMonth(Number(row.value) || 0);
+    }
+  }
+
+  for (const row of statesResult.results || []) {
+    if (row.key === USAGE_STATE_KEYS.D1_STORAGE_BYTES) {
+      snapshot.d1StorageBytes = Number(row.value) || 0;
+      continue;
+    }
+
+    if (row.key === USAGE_STATE_KEYS.R2_STORAGE_BYTES) {
+      snapshot.r2StorageBytes = Number(row.value) || 0;
+    }
+  }
+
+  return snapshot;
+}
+
+async function ensureCurrentMonthStorageProjection(env, now = new Date()) {
+  const { monthKey, monthStartMs, nextMonthStartMs } = getUsageWindow(now);
+  const result = await env.DB.prepare(
+    `
+      SELECT
+        id,
+        created_at AS createdAt,
+        expires_at AS expiresAt,
+        stored_bytes AS storedBytes
+      FROM messages
+      WHERE
+        objects_deleted = 0
+        AND expires_at > ?1
+        AND (storage_projection_month IS NULL OR storage_projection_month != ?2)
+    `
+  )
+    .bind(now.toISOString(), monthKey)
+    .all();
+
+  const rows = result.results || [];
+  if (rows.length === 0) {
+    return;
+  }
+
+  for (const row of rows) {
+    const updateResult = await env.DB.prepare(
+      `
+        UPDATE messages
+        SET storage_projection_month = ?2
+        WHERE id = ?1 AND (storage_projection_month IS NULL OR storage_projection_month != ?2)
+      `
+    )
+      .bind(row.id, monthKey)
+      .run();
+
+    if ((updateResult.meta?.changes || 0) === 0) {
+      continue;
+    }
+
+    const projectedMbSeconds = calculateR2StorageMbSeconds(
+      row.storedBytes,
+      Math.max(Date.parse(row.createdAt), monthStartMs),
+      Math.min(Date.parse(row.expiresAt), nextMonthStartMs)
+    );
+
+    if (projectedMbSeconds > 0) {
+      await incrementUsageCounter(
+        env,
+        USAGE_COUNTER_SCOPE_MONTH,
+        monthKey,
+        USAGE_COUNTER_METRICS.R2_STORAGE_MB_SECONDS,
+        projectedMbSeconds,
+        now.toISOString()
+      );
+    }
+  }
+}
+
+async function commitUsage(env, usage, now = new Date()) {
+  if (!hasUsageDeltas(usage)) {
+    return;
+  }
+
+  const { dayKey, monthKey } = getUsageWindow(now);
+  const updatedAt = now.toISOString();
+
+  if (usage.d1RowsReadDaily) {
+    await incrementUsageCounter(
+      env,
+      USAGE_COUNTER_SCOPE_DAY,
+      dayKey,
+      USAGE_COUNTER_METRICS.D1_ROWS_READ,
+      usage.d1RowsReadDaily,
+      updatedAt
+    );
+  }
+
+  if (usage.d1RowsWrittenDaily) {
+    await incrementUsageCounter(
+      env,
+      USAGE_COUNTER_SCOPE_DAY,
+      dayKey,
+      USAGE_COUNTER_METRICS.D1_ROWS_WRITTEN,
+      usage.d1RowsWrittenDaily,
+      updatedAt
+    );
+  }
+
+  if (usage.d1StorageBytesObserved !== null) {
+    await setUsageState(env, USAGE_STATE_KEYS.D1_STORAGE_BYTES, usage.d1StorageBytesObserved, updatedAt);
+  }
+
+  if (usage.r2ClassAOpsMonthly) {
+    await incrementUsageCounter(
+      env,
+      USAGE_COUNTER_SCOPE_MONTH,
+      monthKey,
+      USAGE_COUNTER_METRICS.R2_CLASS_A_OPS,
+      usage.r2ClassAOpsMonthly,
+      updatedAt
+    );
+  }
+
+  if (usage.r2ClassBOpsMonthly) {
+    await incrementUsageCounter(
+      env,
+      USAGE_COUNTER_SCOPE_MONTH,
+      monthKey,
+      USAGE_COUNTER_METRICS.R2_CLASS_B_OPS,
+      usage.r2ClassBOpsMonthly,
+      updatedAt
+    );
+  }
+
+  if (usage.r2StorageMbSecondsMonthly) {
+    await incrementUsageCounter(
+      env,
+      USAGE_COUNTER_SCOPE_MONTH,
+      monthKey,
+      USAGE_COUNTER_METRICS.R2_STORAGE_MB_SECONDS,
+      usage.r2StorageMbSecondsMonthly,
+      updatedAt
+    );
+  }
+
+  if (usage.r2StorageBytesDelta) {
+    await incrementUsageState(env, USAGE_STATE_KEYS.R2_STORAGE_BYTES, usage.r2StorageBytesDelta, updatedAt);
+  }
+}
+
+async function incrementUsageCounter(env, scope, periodKey, metric, value, updatedAt) {
+  await env.DB.prepare(
+    `
+      INSERT INTO usage_counters (scope, period_key, metric, value, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT(scope, period_key, metric)
+      DO UPDATE SET
+        value = usage_counters.value + excluded.value,
+        updated_at = excluded.updated_at
+    `
+  )
+    .bind(scope, periodKey, metric, value, updatedAt)
+    .run();
+}
+
+async function setUsageState(env, key, value, updatedAt) {
+  await env.DB.prepare(
+    `
+      INSERT INTO usage_state (key, value, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key)
+      DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `
+  )
+    .bind(key, value, updatedAt)
+    .run();
+}
+
+async function incrementUsageState(env, key, delta, updatedAt) {
+  await env.DB.prepare(
+    `
+      INSERT INTO usage_state (key, value, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key)
+      DO UPDATE SET
+        value = MAX(0, usage_state.value + excluded.value),
+        updated_at = excluded.updated_at
+    `
+  )
+    .bind(key, delta, updatedAt)
+    .run();
+}
+
+async function d1First(env, usage, sql, ...params) {
+  const result = await env.DB.prepare(sql).bind(...params).all();
+  recordD1Meta(usage, result.meta);
+  return result.results?.[0] || null;
+}
+
+async function d1Run(env, usage, sql, ...params) {
+  const result = await env.DB.prepare(sql).bind(...params).run();
+  recordD1Meta(usage, result.meta);
+  return result;
+}
+
+async function getObject(env, usage, key) {
+  const object = await env.BUCKET.get(key);
+  addR2ClassB(usage, 1);
+  return object;
+}
+
+async function putObject(env, usage, key, value, options = {}) {
+  const result = await env.BUCKET.put(key, value, options);
+  addR2ClassA(usage, 1);
+  return result;
+}
+
+function estimateMessageMetadataBytes(id, expiresAt) {
+  return 512 + String(id || "").length + String(expiresAt || "").length;
+}
+
+function projectedR2StorageEndMs(expiresAt, now = new Date()) {
+  return Math.min(Date.parse(expiresAt), getUsageWindow(now).nextMonthStartMs);
 }
 
 function messagePayloadKey(id) {

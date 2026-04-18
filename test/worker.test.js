@@ -37,7 +37,10 @@ function createMessageEnv({
   burned = 0,
   serverKeyShare = "A".repeat(43),
   encryptionMode = "standard",
-  passwordProtection = null
+  passwordProtection = null,
+  usageCounters = {},
+  usageState = {},
+  envVars = {}
 } = {}) {
   const attachments = Array.from({ length: attachmentCount }, (_, index) => ({
     index,
@@ -61,13 +64,22 @@ function createMessageEnv({
     id,
     attachmentCount,
     totalSize: 0,
+    storedBytes: 32,
     maxReads,
     readCount,
     createdAt: "2026-04-18T00:00:00.000Z",
     expiresAt: "2099-01-01T00:00:00.000Z",
-    burned
+    burned,
+    objectsDeleted: 0,
+    storageProjectionMonth: "2026-04"
   };
   const deletedKeys = [];
+  const counters = new Map(Object.entries(usageCounters));
+  const states = new Map(Object.entries(usageState));
+
+  function counterKey(scope, periodKey, metric) {
+    return `${scope}:${periodKey}:${metric}`;
+  }
 
   const env = {
     DB: {
@@ -77,25 +89,70 @@ function createMessageEnv({
             this.args = args;
             return this;
           },
-          async first() {
-            if (!sql.includes("FROM messages")) {
-              return null;
+          async all() {
+            if (sql.includes("FROM usage_counters")) {
+              const [dayScope, dayKey, monthScope, monthKey] = this.args;
+              const results = [];
+
+              for (const [key, value] of counters.entries()) {
+                const [scope, periodKey, metric] = key.split(":");
+                if ((scope === dayScope && periodKey === dayKey) || (scope === monthScope && periodKey === monthKey)) {
+                  results.push({ scope, periodKey, metric, value });
+                }
+              }
+
+              return { results, meta: { rows_read: results.length, rows_written: 0, size_after: 1024 } };
             }
 
-            if (!message || this.args[0] !== message.id) {
-              return null;
+            if (sql.includes("FROM usage_state")) {
+              const [firstKey, secondKey] = this.args;
+              const results = [];
+
+              for (const key of [firstKey, secondKey]) {
+                if (states.has(key)) {
+                  results.push({ key, value: states.get(key) });
+                }
+              }
+
+              return { results, meta: { rows_read: results.length, rows_written: 0, size_after: 1024 } };
             }
 
-            return { ...message };
+            if (sql.includes("FROM messages")) {
+              if (!message || this.args[0] !== message.id) {
+                return { results: [], meta: { rows_read: 0, rows_written: 0, size_after: 1024 } };
+              }
+
+              return { results: [{ ...message }], meta: { rows_read: 1, rows_written: 0, size_after: 1024 } };
+            }
+
+            return { results: [], meta: { rows_read: 0, rows_written: 0, size_after: 1024 } };
           },
           async run() {
+            if (sql.includes("INSERT INTO usage_counters")) {
+              const [scope, periodKey, metric, value] = this.args;
+              const key = counterKey(scope, periodKey, metric);
+              counters.set(key, Number(counters.get(key) || 0) + Number(value || 0));
+              return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
+            }
+
+            if (sql.includes("INSERT INTO usage_state")) {
+              const [key, value] = this.args;
+              if (sql.includes("value = MAX(0, usage_state.value + excluded.value)")) {
+                states.set(key, Math.max(0, Number(states.get(key) || 0) + Number(value || 0)));
+              } else {
+                states.set(key, Number(value || 0));
+              }
+
+              return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
+            }
+
             if (sql.includes("read_count = read_count + 1")) {
               if (!message || this.args[0] !== message.id) {
-                return { meta: { changes: 0 } };
+                return { meta: { changes: 0, rows_read: 0, rows_written: 0, size_after: 1024 } };
               }
 
               if (message.burned === 1 || message.readCount >= message.maxReads) {
-                return { meta: { changes: 0 } };
+                return { meta: { changes: 0, rows_read: 0, rows_written: 0, size_after: 1024 } };
               }
 
               message.readCount += 1;
@@ -103,7 +160,7 @@ function createMessageEnv({
                 message.burned = 1;
               }
 
-              return { meta: { changes: 1 } };
+              return { meta: { changes: 1, rows_read: 1, rows_written: 1, size_after: 1024 } };
             }
 
             if (sql.includes("SET burned = 1")) {
@@ -111,10 +168,32 @@ function createMessageEnv({
                 message.burned = 1;
               }
 
-              return { meta: { changes: 1 } };
+              return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
             }
 
-            return { meta: { changes: 0 } };
+            if (sql.includes("SET objects_deleted = 1")) {
+              if (message && this.args[0] === message.id && message.objectsDeleted === 0) {
+                message.objectsDeleted = 1;
+                return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
+              }
+
+              return { meta: { changes: 0, rows_read: 0, rows_written: 0, size_after: 1024 } };
+            }
+
+            if (sql.includes("DELETE FROM messages WHERE id = ?1")) {
+              return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
+            }
+
+            if (sql.includes("SET storage_projection_month = ?2")) {
+              if (message && this.args[0] === message.id && message.storageProjectionMonth !== this.args[1]) {
+                message.storageProjectionMonth = this.args[1];
+                return { meta: { changes: 1, rows_read: 0, rows_written: 1, size_after: 1024 } };
+              }
+
+              return { meta: { changes: 0, rows_read: 0, rows_written: 0, size_after: 1024 } };
+            }
+
+            return { meta: { changes: 0, rows_read: 0, rows_written: 0, size_after: 1024 } };
           }
         };
       }
@@ -146,7 +225,8 @@ function createMessageEnv({
       fetch() {
         return new Response("ok", { status: 200 });
       }
-    }
+    },
+    ...envVars
   };
 
   return {
@@ -257,6 +337,27 @@ test("issues the server key share and consumes a read atomically", async () => {
   assert.equal(body.remainingReads, 0);
   assert.equal(message.readCount, 1);
   assert.deepEqual(deletedKeys, ["messages/test-message-id-0123456789/payload.bin"]);
+});
+
+test("rejects requests that would exceed the configured D1 daily read limit", async () => {
+  const dayKey = new Date().toISOString().slice(0, 10);
+  const { env } = createMessageEnv({
+    usageCounters: {
+      [`day:${dayKey}:d1_rows_read`]: 1
+    },
+    envVars: {
+      USAGE_LIMIT_D1_ROWS_READ_DAILY: "1"
+    }
+  });
+
+  const response = await worker.fetch(new Request("https://example.com/api/message/test-message-id-0123456789"), env, {
+    waitUntil() {}
+  });
+
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.error, "usage_limit_exceeded");
+  assert.equal(body.breaches[0].metric, "d1_rows_read_daily");
 });
 
 test("requires the access password before returning ciphertext or access keys", async () => {

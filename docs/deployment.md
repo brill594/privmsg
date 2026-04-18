@@ -14,8 +14,9 @@
 当前 `Deploy` workflow 会按以下顺序执行：
 
 1. 构建前端产物
-2. 对目标环境执行 `wrangler d1 migrations apply DB --remote --env <environment>`
-3. 执行 `wrangler deploy --env <environment>`
+2. 校验 GitHub Secrets 与可选的 GitHub Variables
+3. 对目标环境执行 `wrangler d1 migrations apply DB --remote --env <environment>`
+4. 执行 `wrangler deploy --env <environment>`，并通过 `--var` 注入 GitHub Variables
 
 ## 必需的 GitHub Secrets
 
@@ -33,8 +34,9 @@
 因此，当前仓库当前已验证的最小可用范围应为：
 
 - `Account` 权限：`Workers Scripts Write`
-- `Account` 权限：`Workers R2 Storage Read`
-- `Account` 权限：`D1 Write`
+  - `Account` 权限：`Workers R2 Storage Edit	`
+
+- `Account` 权限：`D1 Edit`
 - `Account Resources`：只选目标 Cloudflare account
 
 Cloudflare 控制台里该权限有时会显示为 `Workers Scripts Edit`，API 文档中通常写作 `Workers Scripts Write`。
@@ -81,12 +83,14 @@ Cloudflare 控制台里该权限有时会显示为 `Workers Scripts Edit`，API 
 
 ```bash
 npm run github:secrets:check
+npm run github:variables:check
 ```
 
 如果要把它们推到 GitHub 仓库 secrets：
 
 ```bash
 npm run github:secrets:sync -- owner/repo
+npm run github:variables:sync -- owner/repo
 ```
 
 脚本会从以下位置按顺序读取：
@@ -94,6 +98,44 @@ npm run github:secrets:sync -- owner/repo
 1. 当前 shell 环境变量
 2. `.dev.vars`
 3. `.env`
+
+## GitHub Variables
+
+用量上限属于非敏感配置，当前通过 GitHub Variables 注入 Worker。因为 deploy job 绑定了 GitHub `environment`，所以推荐直接在 `production` / `staging` 环境级别配置这些变量，这样两个环境可以独立限额。
+
+当前支持的变量如下：
+
+- `USAGE_LIMIT_D1_ROWS_READ_DAILY`
+- `USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY`
+- `USAGE_LIMIT_D1_STORAGE_GB`
+- `USAGE_LIMIT_R2_CLASS_A_MONTHLY`
+- `USAGE_LIMIT_R2_CLASS_B_MONTHLY`
+- `USAGE_LIMIT_R2_STORAGE_GB_MONTH`
+
+这些变量全部是可选的；未设置时，对应指标只统计不拦截。
+
+当前实现的统计口径：
+
+- D1：按 query `meta.rows_read` / `meta.rows_written` 统计每日读写量，并记录最近一次 query `meta.size_after` 作为当前数据库大小
+- R2：按 Worker 实际执行的 `put` / `get` 统计 Class A / Class B；按对象大小与生存时间窗口估算当月 `GB-month`
+
+这些数字用于“保护性限额”，目标是尽早阻断超量趋势，不是替代 Cloudflare 控制台或 GraphQL Analytics 的最终账单数据。
+
+当前实现的窗口口径：
+
+- D1：按 UTC 自然日滚动，与 Cloudflare Free 计划文档中的每日额度一致
+- R2：按 UTC 自然月累计 Class A / Class B；存储按当前月内对象生存区间折算 `GB-month`
+
+如果你希望直接贴近 Cloudflare Free 计划，可参考下面这组值作为起点（2026-04 查阅官方文档时的公开额度）：
+
+- `USAGE_LIMIT_D1_ROWS_READ_DAILY=5000000`
+- `USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY=100000`
+- `USAGE_LIMIT_D1_STORAGE_GB=5`
+- `USAGE_LIMIT_R2_CLASS_A_MONTHLY=1000000`
+- `USAGE_LIMIT_R2_CLASS_B_MONTHLY=10000000`
+- `USAGE_LIMIT_R2_STORAGE_GB_MONTH=10`
+
+Worker 暴露了一个只读接口 `GET /api/usage`，可返回当前统计值、窗口与已配置限额，用于部署后观察是否接近阈值。
 
 ## Cloudflare 资源
 
@@ -112,7 +154,7 @@ npm run github:secrets:sync -- owner/repo
 
 ## D1 Migrations
 
-当前仓库的 D1 schema 以 [`migrations/0001_init_messages.sql`](/Users/brilliant/repo/privmsg/migrations/0001_init_messages.sql) 为单一来源。
+当前仓库的 D1 schema 以 [`migrations/`](/Users/brilliant/repo/privmsg/migrations/) 目录为单一来源。
 
 - 本地开发库初始化：`npm run db:migrate:local`
 - 手动初始化 staging：`npm run db:migrate:staging`
