@@ -47,11 +47,11 @@ export default {
       }
 
       if (url.pathname === "/" || url.pathname.startsWith("/m/")) {
-        return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
+        return env.ASSETS.fetch(new Request(new URL("/", request.url), request));
       }
 
       if (url.pathname === "/policy" || url.pathname === "/policy/") {
-        return env.ASSETS.fetch(new Request(new URL("/policy/index.html", request.url), request));
+        return env.ASSETS.fetch(new Request(new URL("/policy/", request.url), request));
       }
 
       return env.ASSETS.fetch(request);

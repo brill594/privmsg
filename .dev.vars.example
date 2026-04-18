@@ -1,5 +1,7 @@
 # Use a custom Cloudflare API Token, not the Global API Key.
-# Minimum permission for this repo's deploy workflow: Account -> Workers Scripts Write.
+# Minimum known-working permissions for this repo's deploy workflow:
+# Account -> Workers Scripts Write
+# Account -> Workers R2 Storage Read
 # Scope the token to the target Cloudflare account only.
 CLOUDFLARE_ACCOUNT_ID="replace-with-cloudflare-account-id"
 CLOUDFLARE_API_TOKEN="replace-with-cloudflare-api-token"

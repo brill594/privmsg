@@ -89,7 +89,7 @@ npm run build
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-其中 `CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，不是 Global API Key。当前仓库部署所需最小权限为 `Account -> Workers Scripts Write`，并将资源范围限制在目标 account。更完整说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
+其中 `CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，不是 Global API Key。当前仓库部署已验证需要至少 `Account -> Workers Scripts Write` 和 `Account -> Workers R2 Storage Read`，并将资源范围限制在目标 account。更完整说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
 
 可先在本地检查：
 
