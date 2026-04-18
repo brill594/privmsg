@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "vite",
     "dev:worker": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",
+    "db:migrate:production": "wrangler d1 migrations apply DB --remote --env production",
     "build": "node scripts/build-manifest.mjs && vite build",
     "preview:local": "node scripts/preview-local.mjs",
     "preview": "vite preview --host 127.0.0.1 --port 4173",

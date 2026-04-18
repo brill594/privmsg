@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+    env:
+      DEPLOY_ENV: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
 
     steps:
       - name: Checkout
@@ -43,6 +45,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm run github:secrets:check
 
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            d1 migrations apply DB
+            --remote
+            --env
+            ${{ env.DEPLOY_ENV }}
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
@@ -51,4 +64,4 @@ jobs:
           command: >-
             deploy
             --env
-            ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+            ${{ env.DEPLOY_ENV }}

@@ -17,6 +17,7 @@
 - 消息读取端先拉取并本地解密所有密文，成功后才调用 `confirm-read`
 - 所有 API 响应都携带 `Cache-Control: no-store`
 - GitHub Actions CI / Deploy 工作流已接入
+- D1 schema 已切换到 `migrations/` 管理
 - 提供 GitHub Secrets 本地检查与同步脚本
 - 固定 Node `22.22.2` 与 Wrangler `4.83.0`
 - 前端已切换为 `Vue 3 + Vite`
@@ -45,18 +46,20 @@ npx wrangler r2 bucket create privmsg-payloads
 npx wrangler r2 bucket create privmsg-payloads-preview
 ```
 
-3. 初始化数据库
+3. 初始化本地 D1 开发库
 
 ```bash
-npx wrangler d1 execute privmsg --file schema.sql
+npm run db:migrate:local
 ```
 
-如果数据库已按旧版 schema 初始化过，需要补字段：
+如果你新建了远端数据库，但暂时不想等 GitHub Actions 自动部署，也可以手动对远端环境补 migration：
 
 ```bash
-npx wrangler d1 execute privmsg --command "ALTER TABLE messages ADD COLUMN max_reads INTEGER NOT NULL DEFAULT 1"
-npx wrangler d1 execute privmsg --command "ALTER TABLE messages ADD COLUMN read_count INTEGER NOT NULL DEFAULT 0"
+npm run db:migrate:staging
+npm run db:migrate:production
 ```
+
+`Deploy` workflow 现在会在部署前自动执行目标环境的 D1 migrations，所以正常情况下不再需要手动执行初始化 SQL。
 
 4. 启动前端开发环境
 
@@ -89,7 +92,7 @@ npm run build
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-其中 `CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，不是 Global API Key。当前仓库部署已验证需要至少 `Account -> Workers Scripts Write` 和 `Account -> Workers R2 Storage Read`，并将资源范围限制在目标 account。更完整说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
+其中 `CLOUDFLARE_API_TOKEN` 应使用 Cloudflare API Token，不是 Global API Key。当前仓库部署已验证需要至少 `Account -> Workers Scripts Write`、`Account -> Workers R2 Storage Read`、`Account -> D1 Write`，并将资源范围限制在目标 account。更完整说明见 [docs/deployment.md](/Users/brilliant/repo/privmsg/docs/deployment.md)。
 
 可先在本地检查：
 
