@@ -1402,20 +1402,22 @@ function clearPreview() {
               <!-- File picker -->
               <div class="space-y-2.5">
                 <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
-                <div class="flex min-h-[76px] items-center gap-3.5 rounded-xl border border-input bg-muted/30 p-4">
-                  <input
-                    ref="fileInput"
-                    class="hidden"
-                    type="file"
-                    multiple
-                    accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,.pk8,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf,application/pkcs8,application/octet-stream"
-                    @change="onFileChange"
-                  >
-                  <Button variant="outline" type="button" @click="openFilePicker">
-                    {{ text.composer.chooseFiles }}
-                  </Button>
-                  <p class="m-0 text-sm leading-relaxed text-muted-foreground">{{ selectedFileSummary }}</p>
-                </div>
+                <input
+                  ref="fileInput"
+                  class="hidden"
+                  type="file"
+                  multiple
+                  accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,.pk8,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf,application/pkcs8,application/octet-stream"
+                  @change="onFileChange"
+                >
+                <button
+                  type="button"
+                  class="flex h-10 w-full items-center gap-3 rounded-md border border-input bg-transparent px-3 text-left text-sm text-foreground shadow-sm transition-colors hover:bg-muted/30 focus:outline-none focus:ring-1 focus:ring-ring"
+                  @click="openFilePicker"
+                >
+                  <span class="shrink-0 font-medium text-foreground">{{ text.composer.chooseFiles }}</span>
+                  <span class="min-w-0 truncate text-muted-foreground">{{ selectedFileSummary }}</span>
+                </button>
               </div>
 
               <!-- TTL select -->
