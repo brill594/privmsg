@@ -1,6 +1,22 @@
 export const SUPPORTED_LOCALES = ["zh", "en"];
 const STORAGE_KEY = "privmsg.locale";
 
+function formatProgressBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function detectInitialLocale() {
   if (typeof window !== "undefined") {
     const storedLocale = window.localStorage.getItem(STORAGE_KEY);
@@ -62,10 +78,43 @@ export const messages = {
       copyFailed: "无法直接访问剪贴板，请手动复制链接。",
       noFiles: "尚未选择附件。",
       selectedFiles: (count, size) => `已选择 ${count} 个附件，总计 ${size}。`,
+      enhanced: {
+        toggleLabel: "增强加密",
+        toggleHint: "启用后，消息会先用接收方的 X25519 公钥做一次本地加密，再进入现有的一次性链接加密。",
+        bootstrapLabel: "增强加密资源",
+        bootstrapIdle: "勾选后会从服务端拉取本地生成密钥所需资源。",
+        bootstrapProgress: (loaded, total) =>
+          total
+            ? `正在拉取增强加密资源：${formatProgressBytes(loaded)} / ${formatProgressBytes(total)}`
+            : `正在拉取增强加密资源：已接收 ${formatProgressBytes(loaded)}`,
+        bootstrapReadyInline: (version) => `增强加密资源已就绪，版本 ${version}。`,
+        retryBootstrap: "重新拉取",
+        generateTitle: "生成本地 X25519 密钥对",
+        generateHint: "私钥会直接下载到本地文件，服务端不会保存。公钥会保留在页面上供复制。",
+        generateButton: "生成 X25519 公私钥",
+        privateKeyDownloaded: (name) => `私钥已下载为 ${name}。请妥善保存，解密增强加密消息时需要它。`,
+        publicKeyLabel: "我的公钥",
+        copyPublicKey: "复制公钥",
+        publicKeyPlaceholder: "点击上方按钮生成公私钥后，这里会长期显示你的公钥。",
+        recipientPublicKeyLabel: "接收方公钥",
+        recipientPublicKeyPlaceholder: "填入接收方的 X25519 公钥（base64url）。系统会先做一次 X25519 加密，再进行二次加密。",
+        generatingKeyPair: "正在本地生成 X25519 公私钥…",
+        keyPairReady: (name) => `X25519 密钥对已生成，私钥文件 ${name} 已下载。`,
+        publicKeyCopied: "公钥已复制到剪贴板。",
+        publicKeyCopyFailed: "无法直接复制公钥，请手动复制。",
+        encryptMessage: "正在执行第一次 X25519 加密…",
+        encryptAttachment: (index, total, name) => `正在执行第一次附件加密 ${index + 1}/${total}: ${name}`,
+        errors: {
+          bootstrapFailed: "增强加密资源拉取失败。",
+          keyGenerationFailed: "X25519 密钥生成失败。"
+        }
+      },
       validation: {
         emptyDraft: "至少填写文本或选择一个附件。",
         exceedsSize: "附件总大小不能超过 50MB。",
-        unsupportedType: (name) => `不支持的附件类型: ${name}`
+        unsupportedType: (name) => `不支持的附件类型: ${name}`,
+        missingRecipientPublicKey: "已启用增强加密，请先填写接收方公钥。",
+        invalidRecipientPublicKey: "接收方公钥无效，请检查格式后重试。"
       },
       errors: {
         createFailed: "创建失败。"
@@ -82,7 +131,12 @@ export const messages = {
       initialStatus: "打开链接后会先获取密文，再在本地解密。",
       fetching: "正在获取密文…",
       decryptingMessage: "正在本地解密正文…",
+      selectPrivateKey: "检测到增强加密，请先选择本地私钥文件。",
+      decryptingOuterMessage: "正在解开外层一次性链接加密…",
+      decryptingEnhancedMessage: "正在执行 X25519 内层解密…",
       decryptingAttachment: (name) => `正在解密附件: ${name}`,
+      decryptingOuterAttachment: (name) => `正在解开附件外层加密: ${name}`,
+      decryptingEnhancedAttachment: (name) => `正在执行附件 X25519 解密: ${name}`,
       confirming: "正在确认焚毁…",
       burned: "消息已在本地解密，本次读取已达到访问上限，服务端已完成焚毁。",
       remaining: (count) => `消息已在本地解密，本次访问已确认，还剩 ${count} 次可读。`,
@@ -92,12 +146,21 @@ export const messages = {
       expandPreview: "查看大图",
       closeExpandedPreview: "关闭预览",
       previewTruncated: "[预览已截断。请下载附件查看完整内容。]",
+      privateKeyPromptTitle: "选择增强加密私钥",
+      privateKeyPromptBody: "这条消息使用了增强加密。请先选择本地私钥文件，系统会先解开外层加密，再继续执行 X25519 解密。",
+      privateKeyPromptCancel: "取消",
+      privateKeyPromptChoose: "选择私钥文件",
+      privateKeySelected: (name) => `已选择私钥文件: ${name}`,
       errors: {
         missingMessageId: "缺少消息 ID。",
         missingDecryptionKey: "缺少解密密钥。",
         readFailed: "读取失败。",
         fetchAttachmentFailed: (name) => `无法获取附件: ${name}`,
         missingAttachmentEnvelope: (index) => `缺少附件 ${index} 的加密封装信息。`,
+        missingEnhancedAttachmentEnvelope: (index) => `缺少附件 ${index} 的增强加密封装信息。`,
+        invalidEnhancedEnvelope: "增强加密封装信息无效。",
+        privateKeyRequired: "未选择私钥文件，无法继续解密增强加密消息。",
+        invalidPrivateKey: "私钥文件无效，请重新选择正确的 X25519 私钥文件。",
         confirmFailed: "确认焚毁失败。",
         decryptFailed: "解密失败。"
       }
@@ -182,10 +245,43 @@ export const messages = {
       copyFailed: "Clipboard access failed. Please copy the link manually.",
       noFiles: "No attachment selected.",
       selectedFiles: (count, size) => `${count} attachment(s) selected, total ${size}.`,
+      enhanced: {
+        toggleLabel: "Enhanced encryption",
+        toggleHint: "When enabled, the browser first encrypts locally with the recipient's X25519 public key, then applies the existing one-time-link encryption.",
+        bootstrapLabel: "Enhanced encryption resources",
+        bootstrapIdle: "After enabling this option, the page fetches the resources needed to generate keys locally.",
+        bootstrapProgress: (loaded, total) =>
+          total
+            ? `Fetching enhanced-encryption resources: ${formatProgressBytes(loaded)} / ${formatProgressBytes(total)}`
+            : `Fetching enhanced-encryption resources: received ${formatProgressBytes(loaded)}`,
+        bootstrapReadyInline: (version) => `Enhanced-encryption resources are ready. Version: ${version}.`,
+        retryBootstrap: "Retry fetch",
+        generateTitle: "Generate a local X25519 key pair",
+        generateHint: "The private key is downloaded to a local file and is never uploaded. The public key stays visible here for copying.",
+        generateButton: "Generate X25519 key pair",
+        privateKeyDownloaded: (name) => `Private key downloaded as ${name}. Keep it safe: it is required to decrypt enhanced-encryption messages.`,
+        publicKeyLabel: "My public key",
+        copyPublicKey: "Copy public key",
+        publicKeyPlaceholder: "Generate a key pair to keep your public key visible here for future copy/paste.",
+        recipientPublicKeyLabel: "Recipient public key",
+        recipientPublicKeyPlaceholder: "Paste the recipient's X25519 public key (base64url). The browser encrypts with X25519 first, then applies the second encryption layer.",
+        generatingKeyPair: "Generating the local X25519 key pair…",
+        keyPairReady: (name) => `X25519 key pair generated. The private key file ${name} has been downloaded.`,
+        publicKeyCopied: "Public key copied to clipboard.",
+        publicKeyCopyFailed: "Clipboard access failed. Please copy the public key manually.",
+        encryptMessage: "Running the first X25519 encryption pass…",
+        encryptAttachment: (index, total, name) => `Running the first attachment encryption pass ${index + 1}/${total}: ${name}`,
+        errors: {
+          bootstrapFailed: "Failed to fetch enhanced-encryption resources.",
+          keyGenerationFailed: "Failed to generate the X25519 key pair."
+        }
+      },
       validation: {
         emptyDraft: "Enter a message or select at least one attachment.",
         exceedsSize: "Total attachment size must not exceed 50MB.",
-        unsupportedType: (name) => `Unsupported attachment type: ${name}`
+        unsupportedType: (name) => `Unsupported attachment type: ${name}`,
+        missingRecipientPublicKey: "Enhanced encryption is enabled. Enter the recipient public key first.",
+        invalidRecipientPublicKey: "The recipient public key is invalid. Check the format and try again."
       },
       errors: {
         createFailed: "Create failed."
@@ -202,7 +298,12 @@ export const messages = {
       initialStatus: "The page fetches ciphertext first, then decrypts everything locally.",
       fetching: "Fetching ciphertext…",
       decryptingMessage: "Decrypting message locally…",
+      selectPrivateKey: "Enhanced encryption detected. Choose the local private key file first.",
+      decryptingOuterMessage: "Decrypting the outer one-time-link layer…",
+      decryptingEnhancedMessage: "Decrypting the inner X25519 layer…",
       decryptingAttachment: (name) => `Decrypting attachment: ${name}`,
+      decryptingOuterAttachment: (name) => `Decrypting the outer attachment layer: ${name}`,
+      decryptingEnhancedAttachment: (name) => `Decrypting the X25519 attachment layer: ${name}`,
       confirming: "Confirming read…",
       burned: "The message was decrypted locally and the final allowed read has been consumed. The server has burned it.",
       remaining: (count) => `The message was decrypted locally. This access is confirmed, and ${count} read(s) remain.`,
@@ -212,12 +313,21 @@ export const messages = {
       expandPreview: "Open large preview",
       closeExpandedPreview: "Close preview",
       previewTruncated: "[Preview truncated. Download the file to view the full content.]",
+      privateKeyPromptTitle: "Choose the enhanced-encryption private key",
+      privateKeyPromptBody: "This message uses enhanced encryption. Select the local private key file first. The page will decrypt the outer layer first, then continue with X25519 decryption.",
+      privateKeyPromptCancel: "Cancel",
+      privateKeyPromptChoose: "Choose private key file",
+      privateKeySelected: (name) => `Selected private key file: ${name}`,
       errors: {
         missingMessageId: "Missing message id.",
         missingDecryptionKey: "Missing decryption key.",
         readFailed: "Read failed.",
         fetchAttachmentFailed: (name) => `Unable to fetch attachment: ${name}`,
         missingAttachmentEnvelope: (index) => `Missing encrypted envelope for attachment ${index}.`,
+        missingEnhancedAttachmentEnvelope: (index) => `Missing enhanced-encryption envelope for attachment ${index}.`,
+        invalidEnhancedEnvelope: "The enhanced-encryption envelope is invalid.",
+        privateKeyRequired: "No private key file was selected, so the enhanced-encryption message cannot be decrypted.",
+        invalidPrivateKey: "The private key file is invalid. Choose the correct X25519 private key file and try again.",
         confirmFailed: "Confirm failed.",
         decryptFailed: "Decrypt failed."
       }

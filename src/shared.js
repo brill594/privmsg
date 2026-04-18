@@ -7,6 +7,8 @@ export const MIN_READ_LIMIT = 1;
 export const DEFAULT_READ_LIMIT = 1;
 export const MAX_READ_LIMIT = 20;
 export const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{20,64}$/;
+export const ENCRYPTION_MODE_STANDARD = "standard";
+export const ENCRYPTION_MODE_ENHANCED = "enhanced";
 
 export const ALLOWED_EXTENSIONS = new Set([
   "jpg",
@@ -94,6 +96,10 @@ export function clampTtlSeconds(value) {
 
 export function isValidMessageId(id) {
   return MESSAGE_ID_PATTERN.test(String(id || ""));
+}
+
+export function normalizeEncryptionMode(value) {
+  return value === ENCRYPTION_MODE_ENHANCED ? ENCRYPTION_MODE_ENHANCED : ENCRYPTION_MODE_STANDARD;
 }
 
 export function clampReadLimit(value) {

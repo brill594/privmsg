@@ -1,5 +1,7 @@
 import {
   DEFAULT_READ_LIMIT,
+  ENCRYPTION_MODE_ENHANCED,
+  ENCRYPTION_MODE_STANDARD,
   MAX_READ_LIMIT,
   MAX_TOTAL_SIZE_BYTES,
   clampReadLimit,
@@ -8,8 +10,16 @@ import {
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const X25519_ALGORITHM = "X25519";
 
-export { DEFAULT_READ_LIMIT, MAX_READ_LIMIT, MAX_TOTAL_SIZE_BYTES, clampReadLimit };
+export {
+  DEFAULT_READ_LIMIT,
+  ENCRYPTION_MODE_ENHANCED,
+  ENCRYPTION_MODE_STANDARD,
+  MAX_READ_LIMIT,
+  MAX_TOTAL_SIZE_BYTES,
+  clampReadLimit
+};
 
 export function validateDraft(message, files, strings = {}) {
   if (!message.trim() && files.length === 0) {
@@ -31,41 +41,16 @@ export function validateDraft(message, files, strings = {}) {
 }
 
 export async function encryptPayload(payloadObject, masterKeyBytes, messageId) {
-  const payloadKey = await deriveAesKey(masterKeyBytes, messageId, "payload", ["encrypt"]);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = textEncoder.encode(JSON.stringify(payloadObject));
-  const ciphertext = await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv
-    },
-    payloadKey,
-    plaintext
-  );
-
-  return {
-    iv: base64UrlEncode(iv),
-    ciphertext: base64UrlEncode(new Uint8Array(ciphertext))
-  };
+  return encryptJsonValue(payloadObject, masterKeyBytes, messageId, "payload");
 }
 
 export async function encryptAttachment(file, index, masterKeyBytes, messageId) {
-  const attachmentKey = await deriveAesKey(masterKeyBytes, messageId, `file:${index}`, ["encrypt"]);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = await file.arrayBuffer();
-  const ciphertext = await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv
-    },
-    attachmentKey,
-    plaintext
-  );
+  const ciphertext = await encryptBytes(await file.arrayBuffer(), masterKeyBytes, messageId, `file:${index}`);
 
   return {
     index,
-    iv: base64UrlEncode(iv),
-    encryptedBlob: new Blob([ciphertext], {
+    iv: ciphertext.iv,
+    encryptedBlob: new Blob([ciphertext.ciphertext], {
       type: "application/octet-stream"
     }),
     meta: {
@@ -88,6 +73,93 @@ export async function decryptToString(ciphertextBase64Url, ivBase64Url, key) {
   );
 
   return textDecoder.decode(decrypted);
+}
+
+export async function encryptBytes(plaintext, keyBytes, messageId, purpose) {
+  const encryptionKey = await deriveAesKey(keyBytes, messageId, purpose, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv
+    },
+    encryptionKey,
+    plaintext
+  );
+
+  return {
+    iv: base64UrlEncode(iv),
+    ciphertext: new Uint8Array(ciphertext)
+  };
+}
+
+export async function decryptBytes(ciphertext, ivBase64Url, keyBytes, messageId, purpose) {
+  const decryptionKey = await deriveAesKey(keyBytes, messageId, purpose, ["decrypt"]);
+  return new Uint8Array(
+    await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: base64UrlDecode(ivBase64Url)
+      },
+      decryptionKey,
+      ciphertext
+    )
+  );
+}
+
+export async function encryptJsonValue(value, keyBytes, messageId, purpose) {
+  const ciphertext = await encryptBytes(textEncoder.encode(JSON.stringify(value)), keyBytes, messageId, purpose);
+  return {
+    iv: ciphertext.iv,
+    ciphertext: base64UrlEncode(ciphertext.ciphertext)
+  };
+}
+
+export async function decryptJsonValue(ciphertextBase64Url, ivBase64Url, keyBytes, messageId, purpose) {
+  const plaintext = await decryptBytes(base64UrlDecode(ciphertextBase64Url), ivBase64Url, keyBytes, messageId, purpose);
+  return JSON.parse(textDecoder.decode(plaintext));
+}
+
+export async function generateX25519KeyPair() {
+  return crypto.subtle.generateKey({ name: X25519_ALGORITHM }, true, ["deriveBits"]);
+}
+
+export async function exportX25519PublicKey(publicKey) {
+  return base64UrlEncode(await crypto.subtle.exportKey("raw", publicKey));
+}
+
+export async function exportX25519PrivateKey(privateKey) {
+  return new Uint8Array(await crypto.subtle.exportKey("pkcs8", privateKey));
+}
+
+export async function importX25519PublicKey(value) {
+  const keyBytes = base64UrlDecode(normalizeKeyText(value));
+  if (keyBytes.byteLength !== 32) {
+    throw new Error("Invalid X25519 public key");
+  }
+
+  return crypto.subtle.importKey("raw", keyBytes, X25519_ALGORITHM, false, []);
+}
+
+export async function importX25519PrivateKey(data) {
+  return crypto.subtle.importKey("pkcs8", data, X25519_ALGORITHM, false, ["deriveBits"]);
+}
+
+export async function deriveX25519SharedSecret(privateKey, publicKey) {
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: X25519_ALGORITHM,
+        public: publicKey
+      },
+      privateKey,
+      256
+    )
+  );
+}
+
+export function normalizeKeyText(value) {
+  return String(value || "").replace(/\s+/g, "");
 }
 
 export async function deriveAesKey(masterKeyBytes, messageId, purpose, usages) {

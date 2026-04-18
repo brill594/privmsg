@@ -1,19 +1,29 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
-import { getPreviewKind } from "../src/shared.js";
+import { ENCRYPTION_MODE_ENHANCED, ENCRYPTION_MODE_STANDARD, getPreviewKind } from "../src/shared.js";
 import {
   DEFAULT_READ_LIMIT,
   MAX_READ_LIMIT,
-  MAX_TOTAL_SIZE_BYTES,
+  base64UrlEncode,
   base64UrlDecode,
   clampReadLimit,
-  decryptToString,
-  deriveAesKey,
+  decryptBytes,
+  decryptJsonValue,
   encryptAttachment,
+  encryptBytes,
+  encryptJsonValue,
   encryptPayload,
+  exportX25519PrivateKey,
+  exportX25519PublicKey,
   formatBytes,
   generateOpaqueId,
+  generateX25519KeyPair,
+  importX25519PrivateKey,
+  importX25519PublicKey,
+  inferMimeType,
+  deriveX25519SharedSecret,
+  normalizeKeyText,
   readMessageIdFromPath,
   safeReadJson,
   validateDraft
@@ -24,6 +34,7 @@ import Button from "./components/ui/Button.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 
 const THEME_KEY = "privmsg.theme";
+const ENHANCED_PUBLIC_KEY_KEY = "privmsg.enhanced-public-key";
 
 const policyMode = window.location.pathname === "/policy" || window.location.pathname === "/policy/";
 const readerMode = window.location.pathname.startsWith("/m/");
@@ -36,7 +47,9 @@ const composer = reactive({
   message: "",
   files: [],
   ttlSeconds: 86400,
-  maxReads: DEFAULT_READ_LIMIT
+  maxReads: DEFAULT_READ_LIMIT,
+  encryptionMode: ENCRYPTION_MODE_STANDARD,
+  recipientPublicKey: ""
 });
 
 const composerStatus = reactive({
@@ -45,9 +58,21 @@ const composerStatus = reactive({
   renderer: null
 });
 
+const enhancedBootstrap = reactive({
+  status: "idle",
+  manifest: null,
+  loadedBytes: 0,
+  totalBytes: 0,
+  generatedPublicKey: getStoredEnhancedPublicKey(),
+  privateKeyFileName: "",
+  errorMessage: "",
+  errorRenderer: null
+});
+
 const shareLink = ref("");
 const isCreating = ref(false);
 const fileInput = ref(null);
+const readerPrivateKeyInput = ref(null);
 const isPreviewExpanded = ref(false);
 
 const reader = reactive({
@@ -68,7 +93,25 @@ const preview = reactive({
   visible: false
 });
 
+const readerPrivateKeyPrompt = reactive({
+  visible: false,
+  selectedFileName: "",
+  errorMessage: "",
+  errorRenderer: null
+});
+
+let enhancedBootstrapPromise = null;
+let pendingPrivateKeyRequest = null;
+
 /* ---------- theme ---------- */
+
+function getStoredEnhancedPublicKey() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return localStorage.getItem(ENHANCED_PUBLIC_KEY_KEY) || "";
+}
 
 function getInitialTheme() {
   if (typeof window === "undefined") return true;
@@ -94,6 +137,7 @@ function applyTheme() {
 /* ---------- computed ---------- */
 
 const selectedTotalSize = computed(() => composer.files.reduce((sum, file) => sum + file.size, 0));
+const isEnhancedEncryptionEnabled = computed(() => composer.encryptionMode === ENCRYPTION_MODE_ENHANCED);
 const selectedFileSummary = computed(() => {
   if (!composer.files.length) {
     return text.value.composer.noFiles;
@@ -102,12 +146,45 @@ const selectedFileSummary = computed(() => {
   return text.value.composer.selectedFiles(composer.files.length, formatBytes(selectedTotalSize.value));
 });
 const composerStatusMessage = computed(() => resolveLocalizedText(composerStatus.message, composerStatus.renderer));
+const enhancedBootstrapReady = computed(() => enhancedBootstrap.status === "ready");
+const enhancedBootstrapProgressPercent = computed(() => {
+  if (!enhancedBootstrap.totalBytes) {
+    return enhancedBootstrap.status === "ready" ? 100 : 0;
+  }
+
+  return Math.min(100, Math.round((enhancedBootstrap.loadedBytes / enhancedBootstrap.totalBytes) * 100));
+});
+const enhancedBootstrapMessage = computed(() => {
+  if (!isEnhancedEncryptionEnabled.value) {
+    return "";
+  }
+
+  if (enhancedBootstrap.status === "loading") {
+    return text.value.composer.enhanced.bootstrapProgress(
+      enhancedBootstrap.loadedBytes,
+      enhancedBootstrap.totalBytes
+    );
+  }
+
+  if (enhancedBootstrap.status === "ready" && enhancedBootstrap.manifest) {
+    return text.value.composer.enhanced.bootstrapReadyInline(enhancedBootstrap.manifest.version);
+  }
+
+  if (enhancedBootstrap.status === "error") {
+    return resolveLocalizedText(enhancedBootstrap.errorMessage, enhancedBootstrap.errorRenderer);
+  }
+
+  return text.value.composer.enhanced.bootstrapIdle;
+});
 const previewPlaceholder = computed(() => text.value.reader.previewPlaceholder);
 const readerSummary = computed(() =>
   reader.attachments.length ? text.value.reader.summary(reader.attachments.length) : text.value.reader.noAttachments
 );
 const hasExpandablePreview = computed(() => preview.visible && ["text", "image", "video", "pdf"].includes(preview.kind));
 const readerStatusMessage = computed(() => resolveLocalizedText(reader.statusMessage, reader.statusRenderer));
+const readerPrivateKeyPromptError = computed(() =>
+  resolveLocalizedText(readerPrivateKeyPrompt.errorMessage, readerPrivateKeyPrompt.errorRenderer)
+);
 const readerMessage = computed(() => {
   if (!reader.loaded) {
     return text.value.reader.waitingBody;
@@ -152,6 +229,17 @@ function createLocalizedError(renderer) {
   return error;
 }
 
+function setEnhancedBootstrapError(messageOrRenderer) {
+  enhancedBootstrap.status = "error";
+  enhancedBootstrap.errorMessage = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
+  enhancedBootstrap.errorRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
+}
+
+function setReaderPrivateKeyPromptError(messageOrRenderer = "") {
+  readerPrivateKeyPrompt.errorMessage = typeof messageOrRenderer === "function" ? "" : messageOrRenderer;
+  readerPrivateKeyPrompt.errorRenderer = typeof messageOrRenderer === "function" ? messageOrRenderer : null;
+}
+
 /* ---------- lifecycle ---------- */
 
 watch(
@@ -184,6 +272,15 @@ watch(isPreviewExpanded, (expanded) => {
   }
 });
 
+watch(
+  () => composer.encryptionMode,
+  (mode) => {
+    if (mode === ENCRYPTION_MODE_ENHANCED) {
+      void ensureEnhancedBootstrap().catch(() => {});
+    }
+  }
+);
+
 onMounted(() => {
   window.addEventListener("keydown", handleWindowKeydown);
 
@@ -196,6 +293,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleWindowKeydown);
   document.body.style.overflow = "";
   clearPreview();
+  cancelReaderPrivateKeyPrompt(true);
 });
 
 /* ---------- helpers ---------- */
@@ -249,6 +347,159 @@ function normalizeMaxReads() {
   composer.maxReads = clampReadLimit(composer.maxReads);
 }
 
+function buildAttachmentMeta(file, index) {
+  return {
+    index,
+    name: file.name,
+    type: file.type || inferMimeType(file.name),
+    size: file.size
+  };
+}
+
+function mergeUint8Chunks(chunks, totalBytes) {
+  const merged = new Uint8Array(totalBytes);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return merged;
+}
+
+async function ensureEnhancedBootstrap(force = false) {
+  if (enhancedBootstrap.status === "ready" && enhancedBootstrap.manifest && !force) {
+    return enhancedBootstrap.manifest;
+  }
+
+  if (enhancedBootstrap.status === "loading" && enhancedBootstrapPromise) {
+    return enhancedBootstrapPromise;
+  }
+
+  enhancedBootstrap.status = "loading";
+  enhancedBootstrap.manifest = null;
+  enhancedBootstrap.loadedBytes = 0;
+  enhancedBootstrap.totalBytes = 0;
+  enhancedBootstrap.errorMessage = "";
+  enhancedBootstrap.errorRenderer = null;
+
+  enhancedBootstrapPromise = (async () => {
+    try {
+      const response = await fetch("/api/enhanced-encryption/bootstrap", {
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        throw createLocalizedError((currentText) => currentText.composer.enhanced.errors.bootstrapFailed);
+      }
+
+      const totalBytes = Number(response.headers.get("content-length") || 0);
+      enhancedBootstrap.totalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : 0;
+
+      const chunks = [];
+      let loadedBytes = 0;
+
+      if (response.body) {
+        const streamReader = response.body.getReader();
+        while (true) {
+          const { done, value } = await streamReader.read();
+          if (done) {
+            break;
+          }
+
+          if (value) {
+            chunks.push(value);
+            loadedBytes += value.byteLength;
+            enhancedBootstrap.loadedBytes = loadedBytes;
+          }
+        }
+      } else {
+        const data = new Uint8Array(await response.arrayBuffer());
+        chunks.push(data);
+        loadedBytes = data.byteLength;
+        enhancedBootstrap.loadedBytes = loadedBytes;
+      }
+
+      const manifest = JSON.parse(new TextDecoder().decode(mergeUint8Chunks(chunks, loadedBytes)));
+      enhancedBootstrap.status = "ready";
+      enhancedBootstrap.manifest = manifest;
+      enhancedBootstrap.loadedBytes = loadedBytes;
+      enhancedBootstrap.totalBytes = enhancedBootstrap.totalBytes || loadedBytes;
+      return manifest;
+    } catch (error) {
+      setEnhancedBootstrapError(
+        error.localizedRenderer || error.message || ((currentText) => currentText.composer.enhanced.errors.bootstrapFailed)
+      );
+      throw error;
+    } finally {
+      enhancedBootstrapPromise = null;
+    }
+  })();
+
+  return enhancedBootstrapPromise;
+}
+
+async function regenerateEnhancedBootstrap() {
+  try {
+    await ensureEnhancedBootstrap(true);
+  } catch {
+    // Section state already shows the failure.
+  }
+}
+
+async function generateEnhancedKeyPairAndDownload() {
+  try {
+    await ensureEnhancedBootstrap();
+    setComposerStatus((currentText) => currentText.composer.enhanced.generatingKeyPair);
+
+    const keyPair = await generateX25519KeyPair();
+    const publicKey = await exportX25519PublicKey(keyPair.publicKey);
+    const privateKeyBytes = await exportX25519PrivateKey(keyPair.privateKey);
+    const fileName = `privmsg-x25519-private-key-${new Date().toISOString().replaceAll(":", "-")}.pk8`;
+
+    downloadBlobFile(new Blob([privateKeyBytes], { type: "application/pkcs8" }), fileName);
+    enhancedBootstrap.generatedPublicKey = publicKey;
+    enhancedBootstrap.privateKeyFileName = fileName;
+    localStorage.setItem(ENHANCED_PUBLIC_KEY_KEY, publicKey);
+    setComposerStatus((currentText) => currentText.composer.enhanced.keyPairReady(fileName), "success");
+  } catch (error) {
+    setComposerStatus(
+      error.localizedRenderer || error.message || ((currentText) => currentText.composer.enhanced.errors.keyGenerationFailed),
+      "error"
+    );
+  }
+}
+
+async function copyGeneratedPublicKey() {
+  if (!enhancedBootstrap.generatedPublicKey) {
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(enhancedBootstrap.generatedPublicKey);
+    setComposerStatus((currentText) => currentText.composer.enhanced.publicKeyCopied, "success");
+  } catch {
+    setComposerStatus((currentText) => currentText.composer.enhanced.publicKeyCopyFailed, "warning");
+  }
+}
+
+async function resolveRecipientPublicKey() {
+  composer.recipientPublicKey = normalizeKeyText(composer.recipientPublicKey);
+
+  if (!composer.recipientPublicKey) {
+    throw createLocalizedError((currentText) => currentText.composer.validation.missingRecipientPublicKey);
+  }
+
+  try {
+    return await importX25519PublicKey(composer.recipientPublicKey);
+  } catch {
+    throw createLocalizedError((currentText) => currentText.composer.validation.invalidRecipientPublicKey);
+  }
+}
+
 async function createMessage() {
   const validationError = validateDraft(composer.message, composer.files, text.value.composer.validation);
   if (validationError) {
@@ -264,35 +515,88 @@ async function createMessage() {
     const masterKeyBytes = crypto.getRandomValues(new Uint8Array(32));
     const maxReads = clampReadLimit(composer.maxReads);
     const totalFiles = composer.files.length;
-    const masterKey = btoa(String.fromCharCode(...masterKeyBytes))
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replaceAll("=", "");
-
-    setComposerStatus((currentText) => currentText.composer.encryptMessage);
-
+    const masterKey = base64UrlEncode(masterKeyBytes);
+    const encryptionMode = isEnhancedEncryptionEnabled.value ? ENCRYPTION_MODE_ENHANCED : ENCRYPTION_MODE_STANDARD;
     const encryptedAttachments = [];
     let totalSize = 0;
+    let payloadPlaintext;
 
-    for (let index = 0; index < totalFiles; index += 1) {
-      const file = composer.files[index];
-      totalSize += file.size;
-      setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
-      encryptedAttachments.push(await encryptAttachment(file, index, masterKeyBytes, messageId));
-    }
+    if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
+      const bootstrapManifest = await ensureEnhancedBootstrap();
+      const recipientPublicKey = await resolveRecipientPublicKey();
+      const attachmentMetadata = composer.files.map((file, index) => buildAttachmentMeta(file, index));
 
-    const payload = await encryptPayload(
-      {
+      setComposerStatus((currentText) => currentText.composer.enhanced.encryptMessage);
+
+      const ephemeralKeyPair = await generateX25519KeyPair();
+      const ephemeralPublicKey = await exportX25519PublicKey(ephemeralKeyPair.publicKey);
+      const sharedSecretBytes = await deriveX25519SharedSecret(ephemeralKeyPair.privateKey, recipientPublicKey);
+      const innerPayload = await encryptJsonValue(
+        {
+          version: 1,
+          message: composer.message,
+          attachments: attachmentMetadata
+        },
+        sharedSecretBytes,
+        messageId,
+        "x25519:payload"
+      );
+      const innerAttachmentEnvelopes = [];
+
+      for (let index = 0; index < totalFiles; index += 1) {
+        const file = composer.files[index];
+        totalSize += file.size;
+
+        setComposerStatus((currentText) => currentText.composer.enhanced.encryptAttachment(index, totalFiles, file.name));
+        const firstPass = await encryptBytes(await file.arrayBuffer(), sharedSecretBytes, messageId, `x25519:file:${index}`);
+
+        setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
+        const secondPass = await encryptBytes(firstPass.ciphertext, masterKeyBytes, messageId, `file:${index}`);
+        encryptedAttachments.push({
+          index,
+          iv: secondPass.iv,
+          encryptedBlob: new Blob([secondPass.ciphertext], {
+            type: "application/octet-stream"
+          })
+        });
+        innerAttachmentEnvelopes.push({
+          index,
+          iv: firstPass.iv
+        });
+      }
+
+      payloadPlaintext = {
+        version: 2,
+        encryption: {
+          mode: ENCRYPTION_MODE_ENHANCED,
+          algorithm: bootstrapManifest.algorithm,
+          resourceVersion: bootstrapManifest.version,
+          ephemeralPublicKey,
+          payload: innerPayload
+        },
+        attachments: innerAttachmentEnvelopes
+      };
+    } else {
+      for (let index = 0; index < totalFiles; index += 1) {
+        const file = composer.files[index];
+        totalSize += file.size;
+        setComposerStatus((currentText) => currentText.composer.encryptAttachment(index, totalFiles, file.name));
+        encryptedAttachments.push(await encryptAttachment(file, index, masterKeyBytes, messageId));
+      }
+
+      payloadPlaintext = {
         version: 1,
         message: composer.message,
         attachments: encryptedAttachments.map(({ meta }) => meta)
-      },
-      masterKeyBytes,
-      messageId
-    );
+      };
+    }
+
+    setComposerStatus((currentText) => currentText.composer.encryptMessage);
+    const payload = await encryptPayload(payloadPlaintext, masterKeyBytes, messageId);
 
     const metadata = {
       id: messageId,
+      encryptionMode,
       totalSize,
       expiresInSeconds: Number(composer.ttlSeconds),
       maxReads,
@@ -329,7 +633,10 @@ async function createMessage() {
     shareLink.value = `${window.location.origin}/m/${messageId}#${masterKey}`;
     setComposerStatus((currentText) => currentText.composer.created(maxReads), "success");
   } catch (error) {
-    setComposerStatus(error.localizedRenderer || error.message || ((currentText) => currentText.composer.errors.createFailed), "error");
+    setComposerStatus(
+      error.localizedRenderer || error.message || ((currentText) => currentText.composer.errors.createFailed),
+      "error"
+    );
   } finally {
     isCreating.value = false;
   }
@@ -338,6 +645,8 @@ async function createMessage() {
 async function loadMessage() {
   try {
     reader.loaded = false;
+    reader.attachments = [];
+    setReaderMessage("");
     const messageId = readMessageIdFromPath();
     const masterKey = window.location.hash.slice(1);
 
@@ -365,22 +674,67 @@ async function loadMessage() {
       throw createLocalizedError((currentText) => currentText.reader.errors.readFailed);
     }
 
-    setReaderStatus((currentText) => currentText.reader.decryptingMessage);
+    const encryptionMode = envelope.encryptionMode || ENCRYPTION_MODE_STANDARD;
+    let readerPrivateKey = null;
+    if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
+      setReaderStatus((currentText) => currentText.reader.selectPrivateKey);
+      readerPrivateKey = await requestReaderPrivateKey();
+      setReaderStatus((currentText) => currentText.reader.decryptingOuterMessage);
+    } else {
+      setReaderStatus((currentText) => currentText.reader.decryptingMessage);
+    }
 
     const masterKeyBytes = base64UrlDecode(masterKey);
-    const payloadKey = await deriveAesKey(masterKeyBytes, messageId, "payload", ["decrypt"]);
-    const payloadPlaintext = await decryptToString(envelope.payload.ciphertext, envelope.payload.iv, payloadKey);
-    const payload = JSON.parse(payloadPlaintext);
-    const attachmentEnvelopes = new Map((envelope.attachments || []).map((item) => [item.index, item]));
+    const payload = await decryptJsonValue(envelope.payload.ciphertext, envelope.payload.iv, masterKeyBytes, messageId, "payload");
+    const outerAttachmentEnvelopes = new Map((envelope.attachments || []).map((item) => [item.index, item]));
+    let messageText = payload.message || "";
+    let attachmentMetadata = payload.attachments || [];
+    let enhancedAttachmentEnvelopes = null;
+    let sharedSecretBytes = null;
+
+    if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
+      if (
+        payload.encryption?.mode !== ENCRYPTION_MODE_ENHANCED ||
+        !payload.encryption?.ephemeralPublicKey ||
+        !payload.encryption?.payload
+      ) {
+        throw createLocalizedError((currentText) => currentText.reader.errors.invalidEnhancedEnvelope);
+      }
+
+      let senderPublicKey;
+      try {
+        senderPublicKey = await importX25519PublicKey(payload.encryption.ephemeralPublicKey);
+      } catch {
+        throw createLocalizedError((currentText) => currentText.reader.errors.invalidEnhancedEnvelope);
+      }
+
+      setReaderStatus((currentText) => currentText.reader.decryptingEnhancedMessage);
+      sharedSecretBytes = await deriveX25519SharedSecret(readerPrivateKey, senderPublicKey);
+      const innerPayload = await decryptJsonValue(
+        payload.encryption.payload.ciphertext,
+        payload.encryption.payload.iv,
+        sharedSecretBytes,
+        messageId,
+        "x25519:payload"
+      );
+
+      messageText = innerPayload.message || "";
+      attachmentMetadata = Array.isArray(innerPayload.attachments) ? innerPayload.attachments : [];
+      enhancedAttachmentEnvelopes = new Map((payload.attachments || []).map((item) => [item.index, item]));
+    }
 
     const decryptedAttachments = [];
-    for (const attachment of payload.attachments || []) {
-      const attachmentEnvelope = attachmentEnvelopes.get(attachment.index);
-      if (!attachmentEnvelope) {
+    for (const attachment of attachmentMetadata) {
+      const outerAttachmentEnvelope = outerAttachmentEnvelopes.get(attachment.index);
+      if (!outerAttachmentEnvelope) {
         throw createLocalizedError((currentText) => currentText.reader.errors.missingAttachmentEnvelope(attachment.index));
       }
 
-      setReaderStatus((currentText) => currentText.reader.decryptingAttachment(attachment.name));
+      setReaderStatus((currentText) =>
+        encryptionMode === ENCRYPTION_MODE_ENHANCED
+          ? currentText.reader.decryptingOuterAttachment(attachment.name)
+          : currentText.reader.decryptingAttachment(attachment.name)
+      );
 
       const fileResponse = await fetch(`/api/message/${messageId}/file/${attachment.index}`);
       if (!fileResponse.ok) {
@@ -391,20 +745,33 @@ async function loadMessage() {
         throw createLocalizedError((currentText) => currentText.reader.errors.fetchAttachmentFailed(attachment.name));
       }
 
-      const encryptedBytes = await fileResponse.arrayBuffer();
-      const attachmentKey = await deriveAesKey(masterKeyBytes, messageId, `file:${attachment.index}`, ["decrypt"]);
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: base64UrlDecode(attachmentEnvelope.iv)
-        },
-        attachmentKey,
-        encryptedBytes
+      let decryptedBytes = await decryptBytes(
+        await fileResponse.arrayBuffer(),
+        outerAttachmentEnvelope.iv,
+        masterKeyBytes,
+        messageId,
+        `file:${attachment.index}`
       );
+
+      if (encryptionMode === ENCRYPTION_MODE_ENHANCED) {
+        const enhancedAttachmentEnvelope = enhancedAttachmentEnvelopes?.get(attachment.index);
+        if (!enhancedAttachmentEnvelope?.iv) {
+          throw createLocalizedError((currentText) => currentText.reader.errors.missingEnhancedAttachmentEnvelope(attachment.index));
+        }
+
+        setReaderStatus((currentText) => currentText.reader.decryptingEnhancedAttachment(attachment.name));
+        decryptedBytes = await decryptBytes(
+          decryptedBytes,
+          enhancedAttachmentEnvelope.iv,
+          sharedSecretBytes,
+          messageId,
+          `x25519:file:${attachment.index}`
+        );
+      }
 
       decryptedAttachments.push({
         ...attachment,
-        blob: new Blob([decryptedBuffer], {
+        blob: new Blob([decryptedBytes], {
           type: attachment.type || text.value.common.attachmentTypeFallback
         })
       });
@@ -429,14 +796,17 @@ async function loadMessage() {
       setReaderStatus((currentText) => currentText.reader.remaining(confirmResult.remainingReads), "success");
     }
 
-    setReaderMessage(payload.message || "");
+    setReaderMessage(messageText);
     reader.attachments = decryptedAttachments;
     reader.loaded = true;
   } catch (error) {
     setReaderMessage((currentText) => currentText.reader.unavailable);
     reader.attachments = [];
     reader.loaded = true;
-    setReaderStatus(error.localizedRenderer || error.message || ((currentText) => currentText.reader.errors.decryptFailed), "error");
+    setReaderStatus(
+      error.localizedRenderer || error.message || ((currentText) => currentText.reader.errors.decryptFailed),
+      "error"
+    );
   }
 }
 
@@ -450,6 +820,69 @@ async function copyShareLink() {
     setComposerStatus((currentText) => currentText.composer.copied, "success");
   } catch {
     setComposerStatus((currentText) => currentText.composer.copyFailed, "warning");
+  }
+}
+
+function downloadBlobFile(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function requestReaderPrivateKey() {
+  readerPrivateKeyPrompt.visible = true;
+  readerPrivateKeyPrompt.selectedFileName = "";
+  setReaderPrivateKeyPromptError("");
+
+  return new Promise((resolve, reject) => {
+    pendingPrivateKeyRequest = { resolve, reject };
+  });
+}
+
+function openReaderPrivateKeyPicker() {
+  if (!readerPrivateKeyInput.value) {
+    return;
+  }
+
+  readerPrivateKeyInput.value.value = "";
+  readerPrivateKeyInput.value.click();
+}
+
+function cancelReaderPrivateKeyPrompt(silent = false) {
+  readerPrivateKeyPrompt.visible = false;
+  readerPrivateKeyPrompt.selectedFileName = "";
+  setReaderPrivateKeyPromptError("");
+
+  if (!pendingPrivateKeyRequest) {
+    return;
+  }
+
+  const { reject } = pendingPrivateKeyRequest;
+  pendingPrivateKeyRequest = null;
+  if (!silent) {
+    reject(createLocalizedError((currentText) => currentText.reader.errors.privateKeyRequired));
+  }
+}
+
+async function onReaderPrivateKeySelected(event) {
+  const file = event.target.files?.[0];
+  if (!file || !pendingPrivateKeyRequest) {
+    return;
+  }
+
+  try {
+    const privateKey = await importX25519PrivateKey(await file.arrayBuffer());
+    const { resolve } = pendingPrivateKeyRequest;
+    pendingPrivateKeyRequest = null;
+    readerPrivateKeyPrompt.visible = false;
+    readerPrivateKeyPrompt.selectedFileName = file.name;
+    setReaderPrivateKeyPromptError("");
+    resolve(privateKey);
+  } catch {
+    setReaderPrivateKeyPromptError((currentText) => currentText.reader.errors.invalidPrivateKey);
   }
 }
 
@@ -476,12 +909,7 @@ async function previewAttachment(attachment) {
 }
 
 function downloadAttachment(attachment) {
-  const url = URL.createObjectURL(attachment.blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = attachment.name;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlobFile(attachment.blob, attachment.name);
 }
 
 function clearPreview() {
@@ -746,6 +1174,105 @@ function clearPreview() {
               </div>
             </div>
 
+            <!-- Enhanced encryption -->
+            <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+              <label class="flex cursor-pointer items-start gap-3">
+                <input
+                  :checked="isEnhancedEncryptionEnabled"
+                  type="checkbox"
+                  class="mt-1 h-4 w-4 rounded border-input text-primary focus:ring-ring"
+                  @change="composer.encryptionMode = $event.target.checked ? ENCRYPTION_MODE_ENHANCED : ENCRYPTION_MODE_STANDARD"
+                >
+                <div class="space-y-1">
+                  <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.enhanced.toggleLabel }}</p>
+                  <p class="m-0 text-sm leading-relaxed text-muted-foreground">
+                    {{ text.composer.enhanced.toggleHint }}
+                  </p>
+                </div>
+              </label>
+
+              <div v-if="isEnhancedEncryptionEnabled" class="space-y-4">
+                <div class="space-y-2 rounded-xl border border-border bg-card p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.enhanced.bootstrapLabel }}</p>
+                      <p class="m-0 mt-1 text-sm text-muted-foreground">{{ enhancedBootstrapMessage }}</p>
+                    </div>
+                    <Button
+                      v-if="enhancedBootstrap.status === 'error'"
+                      variant="secondary"
+                      size="sm"
+                      type="button"
+                      @click="regenerateEnhancedBootstrap"
+                    >
+                      {{ text.composer.enhanced.retryBootstrap }}
+                    </Button>
+                  </div>
+                  <div class="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      class="h-full rounded-full bg-primary transition-all"
+                      :style="{ width: `${enhancedBootstrapProgressPercent}%` }"
+                    ></div>
+                  </div>
+                </div>
+
+                <div v-if="enhancedBootstrapReady" class="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+                  <div class="space-y-3 rounded-xl border border-border bg-card p-4">
+                    <div>
+                      <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.enhanced.generateTitle }}</p>
+                      <p class="m-0 mt-1 text-sm leading-relaxed text-muted-foreground">
+                        {{ text.composer.enhanced.generateHint }}
+                      </p>
+                    </div>
+                    <Button type="button" @click="generateEnhancedKeyPairAndDownload">
+                      {{ text.composer.enhanced.generateButton }}
+                    </Button>
+                    <p v-if="enhancedBootstrap.privateKeyFileName" class="m-0 text-sm text-muted-foreground">
+                      {{ text.composer.enhanced.privateKeyDownloaded(enhancedBootstrap.privateKeyFileName) }}
+                    </p>
+                  </div>
+
+                  <div class="space-y-3 rounded-xl border border-border bg-card p-4">
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between gap-3">
+                        <label class="text-sm font-semibold text-foreground">
+                          {{ text.composer.enhanced.publicKeyLabel }}
+                        </label>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          type="button"
+                          :disabled="!enhancedBootstrap.generatedPublicKey"
+                          @click="copyGeneratedPublicKey"
+                        >
+                          {{ text.composer.enhanced.copyPublicKey }}
+                        </Button>
+                      </div>
+                      <textarea
+                        :value="enhancedBootstrap.generatedPublicKey"
+                        rows="3"
+                        readonly
+                        :placeholder="text.composer.enhanced.publicKeyPlaceholder"
+                        class="w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      ></textarea>
+                    </div>
+
+                    <div class="space-y-2">
+                      <label class="text-sm font-semibold text-foreground">
+                        {{ text.composer.enhanced.recipientPublicKeyLabel }}
+                      </label>
+                      <textarea
+                        v-model="composer.recipientPublicKey"
+                        rows="4"
+                        :placeholder="text.composer.enhanced.recipientPublicKeyPlaceholder"
+                        class="w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      ></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Attachment summary -->
             <div class="space-y-1 rounded-xl border border-border bg-muted/30 p-4">
               <span class="text-sm font-semibold text-foreground">{{ text.composer.summaryLabel }}</span>
@@ -832,6 +1359,56 @@ function clearPreview() {
                   title="attachment preview expanded"
                   sandbox="allow-downloads allow-same-origin"
                 ></iframe>
+              </div>
+            </div>
+          </div>
+        </transition>
+      </teleport>
+
+      <teleport to="body">
+        <transition name="fade-up">
+          <div
+            v-if="readerPrivateKeyPrompt.visible"
+            class="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            @click.self="cancelReaderPrivateKeyPrompt"
+          >
+            <div class="flex h-full items-center justify-center p-4 sm:p-6">
+              <div class="w-full max-w-lg space-y-4 rounded-2xl border border-border bg-card p-6 shadow-2xl">
+                <input
+                  ref="readerPrivateKeyInput"
+                  class="hidden"
+                  type="file"
+                  accept=".pk8,application/pkcs8,.der,application/octet-stream"
+                  @change="onReaderPrivateKeySelected"
+                >
+                <div class="space-y-2">
+                  <h2 class="text-lg font-semibold text-card-foreground">{{ text.reader.privateKeyPromptTitle }}</h2>
+                  <p class="text-sm leading-relaxed text-muted-foreground">
+                    {{ text.reader.privateKeyPromptBody }}
+                  </p>
+                </div>
+
+                <div
+                  v-if="readerPrivateKeyPromptError"
+                  :class="[toneClasses('error'), 'rounded-xl border px-4 py-3 text-sm font-semibold']"
+                >
+                  {{ readerPrivateKeyPromptError }}
+                </div>
+
+                <p v-if="readerPrivateKeyPrompt.selectedFileName" class="text-sm text-muted-foreground">
+                  {{ text.reader.privateKeySelected(readerPrivateKeyPrompt.selectedFileName) }}
+                </p>
+
+                <div class="flex flex-wrap justify-end gap-2">
+                  <Button variant="secondary" type="button" @click="cancelReaderPrivateKeyPrompt">
+                    {{ text.reader.privateKeyPromptCancel }}
+                  </Button>
+                  <Button type="button" @click="openReaderPrivateKeyPicker">
+                    {{ text.reader.privateKeyPromptChoose }}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

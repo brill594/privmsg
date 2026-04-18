@@ -44,3 +44,19 @@ test("serves the policy entry without requesting policy/index.html directly", as
   assert.equal(requests.length, 1);
   assert.equal(new URL(requests[0].url).pathname, "/policy/");
 });
+
+test("serves the enhanced-encryption bootstrap resource", async () => {
+  const { env } = createEnv();
+
+  const response = await worker.fetch(new Request("https://example.com/api/enhanced-encryption/bootstrap"), env, {
+    waitUntil() {}
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+
+  const body = await response.json();
+  assert.equal(body.version, "x25519-bootstrap-v1");
+  assert.equal(body.algorithm, "X25519-HKDF-AES-256-GCM");
+  assert.equal(body.metadataField, "encryptionMode");
+});

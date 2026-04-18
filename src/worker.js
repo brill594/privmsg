@@ -1,12 +1,15 @@
 import {
   DEFAULT_READ_LIMIT,
+  ENCRYPTION_MODE_ENHANCED,
+  ENCRYPTION_MODE_STANDARD,
   MAX_PAYLOAD_BYTES,
   MAX_READ_LIMIT,
   MAX_TOTAL_SIZE_BYTES,
   clampTtlSeconds,
   clampReadLimit,
   approximateBytesFromBase64Url,
-  isValidMessageId
+  isValidMessageId,
+  normalizeEncryptionMode
 } from "./shared.js";
 
 const JSON_HEADERS = {
@@ -21,6 +24,15 @@ const BINARY_HEADERS = {
   "X-Content-Type-Options": "nosniff"
 };
 
+const ENHANCED_BOOTSTRAP = {
+  version: "x25519-bootstrap-v1",
+  algorithm: "X25519-HKDF-AES-256-GCM",
+  publicKeyEncoding: "base64url-raw-32",
+  privateKeyEncoding: "pkcs8",
+  metadataField: "encryptionMode",
+  note: "Generate key pairs locally. Never upload private keys."
+};
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -30,6 +42,10 @@ export default {
 
       if (url.pathname === "/api/create") {
         return await handleCreate(request, env);
+      }
+
+      if (url.pathname === "/api/enhanced-encryption/bootstrap") {
+        return handleEnhancedBootstrap();
       }
 
       const messageMatch = url.pathname.match(/^\/api\/message\/([A-Za-z0-9_-]{20,64})$/);
@@ -103,7 +119,7 @@ async function handleCreate(request, env) {
     return json({ error: "invalid_request", message: validation.message }, validation.status);
   }
 
-  const { id, attachments, totalSize, payload, expiresAt, maxReads } = validation.value;
+  const { id, attachments, encryptionMode, totalSize, payload, expiresAt, maxReads } = validation.value;
   const attachmentBuffers = [];
   let totalEncryptedSize = 0;
 
@@ -193,6 +209,7 @@ async function handleCreate(request, env) {
 
   const payloadObject = {
     version: 1,
+    encryptionMode,
     payload,
     attachments: attachments.map(({ index, iv, encryptedSize }) => ({
       index,
@@ -225,6 +242,7 @@ async function handleCreate(request, env) {
     {
       ok: true,
       id,
+      encryptionMode,
       expiresAt,
       attachmentCount: attachments.length,
       totalSize,
@@ -259,6 +277,7 @@ async function handleGetMessage(id, env, ctx) {
   const payload = JSON.parse(await payloadObject.text());
   return json({
     id: message.id,
+    encryptionMode: normalizeEncryptionMode(payload.encryptionMode),
     attachmentCount: message.attachmentCount,
     totalSize: message.totalSize,
     maxReads: message.maxReads,
@@ -267,6 +286,16 @@ async function handleGetMessage(id, env, ctx) {
     createdAt: message.createdAt,
     expiresAt: message.expiresAt,
     ...payload
+  });
+}
+
+function handleEnhancedBootstrap() {
+  const body = JSON.stringify(ENHANCED_BOOTSTRAP);
+  const headers = new Headers(JSON_HEADERS);
+  headers.set("Content-Length", String(new TextEncoder().encode(body).byteLength));
+  return new Response(body, {
+    status: 200,
+    headers
   });
 }
 
@@ -430,6 +459,11 @@ function validateCreateMetadata(metadata) {
     return invalid("Encrypted payload exceeds size limit", 413);
   }
 
+  const encryptionMode = normalizeEncryptionMode(metadata.encryptionMode);
+  if (metadata.encryptionMode && encryptionMode !== metadata.encryptionMode) {
+    return invalid("Invalid encryption mode");
+  }
+
   const rawAttachments = Array.isArray(metadata.attachments) ? metadata.attachments : [];
   const attachments = [];
 
@@ -473,6 +507,7 @@ function validateCreateMetadata(metadata) {
     ok: true,
     value: {
       id,
+      encryptionMode,
       payload,
       attachments,
       totalSize,
