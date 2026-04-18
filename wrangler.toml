@@ -23,12 +23,12 @@ preview_bucket_name = "privmsg-payloads-preview"
 
 [[env.production.d1_databases]]
 binding = "DB"
-database_name = "privmsg"
-database_id = "replace-with-d1-id"
+database_name = "privmsg-prod"
+database_id = "efb894c9-ebe4-4083-abea-655ed37f22ba"
 
 [[env.production.r2_buckets]]
 binding = "BUCKET"
-bucket_name = "privmsg-payloads"
+bucket_name = "privmsg-payloads-prod"
 preview_bucket_name = "privmsg-payloads-preview"
 
 [env.staging]
