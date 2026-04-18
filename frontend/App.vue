@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import { getPreviewKind } from "../src/shared.js";
 import {
@@ -8,12 +8,10 @@ import {
   MAX_TOTAL_SIZE_BYTES,
   base64UrlDecode,
   clampReadLimit,
-  createPreviewDocument,
   decryptToString,
   deriveAesKey,
   encryptAttachment,
   encryptPayload,
-  escapeHtml,
   formatBytes,
   generateOpaqueId,
   readMessageIdFromPath,
@@ -48,13 +46,15 @@ const fileInput = ref(null);
 const reader = reactive({
   statusMessage: "",
   statusTone: "progress",
+  loaded: false,
   message: "",
   attachments: []
 });
 
-const previewFrame = ref(null);
 const preview = reactive({
   activeUrl: "",
+  kind: "",
+  textContent: "",
   visible: false
 });
 
@@ -70,7 +70,13 @@ const previewPlaceholder = computed(() => text.value.reader.previewPlaceholder);
 const readerSummary = computed(() =>
   reader.attachments.length ? text.value.reader.summary(reader.attachments.length) : text.value.reader.noAttachments
 );
-const readerMessage = computed(() => reader.message || text.value.reader.waitingBody);
+const readerMessage = computed(() => {
+  if (!reader.loaded) {
+    return text.value.reader.waitingBody;
+  }
+
+  return reader.message || text.value.reader.emptyBody;
+});
 const footerHref = computed(() => (policyMode ? "/" : "/policy"));
 const footerLabel = computed(() => (policyMode ? text.value.footer.home : text.value.footer.legal));
 
@@ -84,7 +90,7 @@ watch(
       setComposerStatus(text.value.composer.initialStatus, "progress");
     }
 
-    if (readerMode && !reader.attachments.length && !reader.message) {
+    if (readerMode && !reader.loaded) {
       setReaderStatus(text.value.reader.initialStatus, "progress");
     }
   },
@@ -211,6 +217,7 @@ async function createMessage() {
 
 async function loadMessage() {
   try {
+    reader.loaded = false;
     const messageId = readMessageIdFromPath();
     const masterKey = window.location.hash.slice(1);
 
@@ -298,9 +305,11 @@ async function loadMessage() {
 
     reader.message = payload.message || "";
     reader.attachments = decryptedAttachments;
+    reader.loaded = true;
   } catch (error) {
     reader.message = text.value.reader.unavailable;
     reader.attachments = [];
+    reader.loaded = true;
     setReaderStatus(error.message || "Decrypt failed", "error");
   }
 }
@@ -320,39 +329,37 @@ async function copyShareLink() {
 
 async function previewAttachment(attachment) {
   clearPreview();
-  preview.visible = true;
-  await nextTick();
-
   const previewKind = getPreviewKind(attachment);
-  const objectUrl = URL.createObjectURL(attachment.blob);
-  preview.activeUrl = objectUrl;
-
-  if (previewKind === "text") {
-    const textContent = await attachment.blob.text();
-    const previewText =
-      textContent.length > 200000
-        ? `${textContent.slice(0, 200000)}\n\n[Preview truncated. Download to see the full file.]`
-        : textContent;
-    previewFrame.value.srcdoc = createPreviewDocument(`<pre>${escapeHtml(previewText)}</pre>`);
+  if (previewKind === "download") {
+    downloadAttachment(attachment);
     return;
   }
 
+  if (previewKind === "text") {
+    const textContent = await attachment.blob.text();
+    preview.kind = "text";
+    preview.textContent =
+      textContent.length > 200000
+        ? `${textContent.slice(0, 200000)}\n\n[Preview truncated. Download to see the full file.]`
+        : textContent;
+    preview.visible = true;
+    return;
+  }
+
+  preview.activeUrl = URL.createObjectURL(attachment.blob);
+  preview.kind = previewKind;
+  preview.visible = true;
   if (previewKind === "image") {
-    previewFrame.value.srcdoc = createPreviewDocument(`<img src="${objectUrl}" alt="${escapeHtml(attachment.name)}">`);
     return;
   }
 
   if (previewKind === "video") {
-    previewFrame.value.srcdoc = createPreviewDocument(`<video src="${objectUrl}" controls playsinline></video>`);
     return;
   }
 
   if (previewKind === "pdf") {
-    previewFrame.value.srcdoc = createPreviewDocument(`<iframe src="${objectUrl}" title="pdf preview"></iframe>`);
     return;
   }
-
-  downloadAttachment(attachment);
 }
 
 function downloadAttachment(attachment) {
@@ -365,15 +372,14 @@ function downloadAttachment(attachment) {
 }
 
 function clearPreview() {
-  if (previewFrame.value) {
-    previewFrame.value.removeAttribute("src");
-    previewFrame.value.removeAttribute("srcdoc");
-  }
-
   if (preview.activeUrl) {
     URL.revokeObjectURL(preview.activeUrl);
     preview.activeUrl = "";
   }
+
+  preview.kind = "";
+  preview.textContent = "";
+  preview.visible = false;
 }
 </script>
 
@@ -472,12 +478,21 @@ function clearPreview() {
         <div v-if="!preview.visible" class="preview-placeholder">
           {{ previewPlaceholder }}
         </div>
+        <div v-else-if="preview.kind === 'text'" class="preview-surface">
+          <pre class="preview-text">{{ preview.textContent }}</pre>
+        </div>
+        <div v-else-if="preview.kind === 'image'" class="preview-surface">
+          <img class="preview-media" :src="preview.activeUrl" alt="attachment preview">
+        </div>
+        <div v-else-if="preview.kind === 'video'" class="preview-surface">
+          <video class="preview-media" :src="preview.activeUrl" controls playsinline></video>
+        </div>
         <iframe
-          v-else
-          ref="previewFrame"
+          v-else-if="preview.kind === 'pdf'"
           class="preview-frame"
+          :src="preview.activeUrl"
           title="attachment preview"
-          sandbox="allow-downloads"
+          sandbox="allow-downloads allow-same-origin"
         ></iframe>
       </article>
     </section>
@@ -939,7 +954,8 @@ textarea {
 }
 
 .preview-placeholder,
-.preview-frame {
+.preview-frame,
+.preview-surface {
   width: 100%;
   min-height: 520px;
 }
@@ -948,6 +964,32 @@ textarea {
   display: grid;
   place-items: center;
   color: #cbb0be;
+}
+
+.preview-surface {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 18px;
+  box-sizing: border-box;
+}
+
+.preview-text {
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+  color: #fff1f7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 14px/1.65 "SF Mono", Menlo, monospace;
+}
+
+.preview-media {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  border: 0;
+  background: #0f0c13;
 }
 
 .preview-frame {
