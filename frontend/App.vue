@@ -587,7 +587,8 @@ function showCopyFeedback(target) {
   }, 1200);
 }
 
-async function copyComposerText(value, successRenderer = (currentText) => currentText.common.copied, failureRenderer = (currentText) => currentText.common.copyFailed, feedbackTarget = "") {
+
+async function copyComposerText(value, failureRenderer = (currentText) => currentText.common.copyFailed, feedbackTarget = "") {
   const textToCopy = String(value || "");
   if (!textToCopy) {
     return;
@@ -595,7 +596,6 @@ async function copyComposerText(value, successRenderer = (currentText) => curren
 
   if (await copyTextToClipboard(textToCopy)) {
     showCopyFeedback(feedbackTarget);
-    setComposerStatus(successRenderer, "success");
   } else {
     setComposerStatus(failureRenderer, "warning");
   }
@@ -609,7 +609,6 @@ async function copyReaderText(value, feedbackTarget = "") {
 
   if (await copyTextToClipboard(textToCopy)) {
     showCopyFeedback(feedbackTarget);
-    setReaderStatus((currentText) => currentText.common.copied, "success");
   } else {
     setReaderStatus((currentText) => currentText.common.copyFailed, "warning");
   }
@@ -618,11 +617,11 @@ async function copyReaderText(value, feedbackTarget = "") {
 async function copyGeneratedPublicKey() {
   await copyComposerText(
     enhancedBootstrap.generatedPublicKey,
-    (currentText) => currentText.composer.enhanced.publicKeyCopied,
     (currentText) => currentText.composer.enhanced.publicKeyCopyFailed,
     "public-key"
   );
 }
+
 
 async function resolveRecipientPublicKey() {
   composer.recipientPublicKey = normalizeKeyText(composer.recipientPublicKey);
@@ -1182,10 +1181,10 @@ async function loadMessage() {
   }
 }
 
+
 async function copyShareLink() {
   await copyComposerText(
     shareLink.value,
-    (currentText) => currentText.composer.copied,
     (currentText) => currentText.composer.copyFailed,
     "share-link"
   );
@@ -1506,22 +1505,12 @@ function clearPreview() {
                 </span>
               </div>
               <div class="relative">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
-                  :disabled="!composer.message"
-                  @click="copyComposerText(composer.message, undefined, undefined, 'composer-message')"
-                >
-                  {{ copiedTextTarget === "composer-message" ? text.common.copiedAction : text.common.copy }}
-                </Button>
                 <textarea
                   v-model="composer.message"
                   rows="8"
                   :maxlength="MAX_MESSAGE_CHARACTERS"
                   :placeholder="text.composer.bodyPlaceholder"
-                  class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 pr-24 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 ></textarea>
               </div>
             </div>
@@ -1677,7 +1666,7 @@ function clearPreview() {
                           type="button"
                           class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
                           :disabled="!composer.recipientPublicKey"
-                          @click="copyComposerText(composer.recipientPublicKey, undefined, undefined, 'recipient-public-key')"
+                          @click="copyComposerText(composer.recipientPublicKey, undefined, 'recipient-public-key')"
                         >
                           {{ copiedTextTarget === "recipient-public-key" ? text.common.copiedAction : text.common.copy }}
                         </Button>
