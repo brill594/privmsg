@@ -1937,12 +1937,20 @@ function clearPreview() {
       </teleport>
 
       <!-- Footer -->
-      <footer class="mt-6 flex justify-center">
+      <footer class="mt-6 flex flex-wrap justify-center gap-3">
         <a
           :href="footerHref"
           class="rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
         >
           {{ footerLabel }}
+        </a>
+        <a
+          href="https://github.com/brill594/privmsg"
+          target="_blank"
+          rel="noreferrer noopener"
+          class="rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
+        >
+          GitHub
         </a>
       </footer>
     </div>
