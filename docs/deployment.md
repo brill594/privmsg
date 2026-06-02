@@ -11,14 +11,14 @@
 
 `CI` 会在 `pull_request` 和 `push main` 时执行测试，并上传构建产物。
 
-`Deploy` 会在 `push main` 时自动部署到 `production`，也支持手工触发并选择 `staging` / `production`。
+`Deploy` 会在 `push main` 时使用默认 Wrangler 配置自动部署，也支持手工触发。
 
 当前 `Deploy` workflow 的顺序如下：
 
 1. 构建前端产物
 2. 校验 GitHub Secrets 与可选的 GitHub Variables
-3. 对目标环境执行 `wrangler d1 migrations apply DB --remote --env <environment>`
-4. 执行 `wrangler deploy --env <environment>`，并通过 `--var` 注入 GitHub Variables
+3. 执行 `wrangler d1 migrations apply DB --remote`
+4. 执行 `wrangler deploy`，并通过 `--var` 注入 GitHub Variables
 
 ## 必需的 GitHub Secrets
 
@@ -78,7 +78,7 @@ npm run github:variables:sync -- owner/repo
 
 ## GitHub Variables
 
-用量上限属于非敏感配置，当前通过 GitHub Variables 注入 Worker。由于 deploy job 绑定了 GitHub `environment`，推荐直接在 `production` / `staging` 环境级别配置这些变量，以便两个环境独立设置阈值。
+用量上限属于非敏感配置，当前通过 GitHub Variables 注入 Worker。Deploy job 绑定到 GitHub `production` environment，以继续使用环境级 secrets / variables；也可以改用仓库级变量。
 
 当前支持的变量如下：
 
@@ -104,19 +104,15 @@ npm run github:variables:sync -- owner/repo
 
 ## Cloudflare 资源
 
-当前仓库定义了两个 Wrangler 环境：
+当前仓库只使用 Wrangler 默认环境。`wrangler.toml` 顶层 D1 / R2 绑定当前指向生产资源。
 
-- `production`
-- `staging`
-
-部署前请检查 [`wrangler.toml`](../wrangler.toml)，确保其中的 D1 / R2 绑定与目标环境一致。若仓库计划公开发布，建议不要在公开文档中记录账号专属资源标识，并根据需要将环境差异改为私有配置或 CI 注入。
+部署前请检查 [`wrangler.toml`](../wrangler.toml)，确保其中的 D1 / R2 绑定与目标资源一致。若仓库计划公开发布，建议不要在公开文档中记录账号专属资源标识，并根据需要将资源标识改为私有配置或 CI 注入。
 
 ## D1 Migrations
 
 当前仓库的 D1 schema 以 [`migrations/`](../migrations/) 目录为单一来源。
 
 - 本地开发库初始化：`npm run db:migrate:local`
-- 手动初始化 staging：`npm run db:migrate:staging`
-- 手动初始化 production：`npm run db:migrate:production`
+- 远端数据库初始化 / 迁移：`npm run db:migrate:remote`
 
-通过 GitHub Actions 执行 `Deploy` 时，目标环境的 pending migrations 会在 Worker 发布前自动应用。
+通过 GitHub Actions 执行 `Deploy` 时，远端数据库的 pending migrations 会在 Worker 发布前自动应用。

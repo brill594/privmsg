@@ -11,14 +11,14 @@ This repository includes two workflows:
 
 `CI` runs on `pull_request` and `push main`, executes verification, and uploads build artifacts.
 
-`Deploy` runs automatically on `push main` to `production`, and it can also be triggered manually for either `staging` or `production`.
+`Deploy` runs automatically on `push main` against the default Wrangler configuration, and it can also be triggered manually.
 
 The current `Deploy` workflow runs in this order:
 
 1. Build the frontend bundle
 2. Validate GitHub secrets and optional GitHub variables
-3. Run `wrangler d1 migrations apply DB --remote --env <environment>`
-4. Run `wrangler deploy --env <environment>` and inject GitHub Variables through `--var`
+3. Run `wrangler d1 migrations apply DB --remote`
+4. Run `wrangler deploy` and inject GitHub Variables through `--var`
 
 ## Required GitHub Secrets
 
@@ -78,7 +78,7 @@ The scripts read values in this order:
 
 ## GitHub Variables
 
-Usage guardrails are non-sensitive configuration values passed into the Worker through GitHub Variables. Because the deploy job is bound to a GitHub `environment`, it is usually best to configure them separately for `production` and `staging`.
+Usage guardrails are non-sensitive configuration values passed into the Worker through GitHub Variables. The deploy job is bound to the GitHub `production` environment so existing environment-scoped secrets / variables continue to work; repository-level variables also work if you remove that binding.
 
 Supported variables:
 
@@ -104,19 +104,15 @@ Set the limits according to your current Cloudflare plan and internal budget, ra
 
 ## Cloudflare Resources
 
-The repository currently defines two Wrangler environments:
+The repository uses Wrangler's default environment only. The top-level D1 / R2 bindings in [`wrangler.toml`](../wrangler.toml) currently point at production resources.
 
-- `production`
-- `staging`
-
-Review [`wrangler.toml`](../wrangler.toml) before deploying and make sure the D1 / R2 bindings match your own environments. If you plan to publish the repository, avoid documenting account-specific resource identifiers in public-facing docs, and move environment-specific values to private configuration or CI injection when appropriate.
+Review [`wrangler.toml`](../wrangler.toml) before deploying and make sure the D1 / R2 bindings match your target resources. If you plan to publish the repository, avoid documenting account-specific resource identifiers in public-facing docs, and move resource identifiers to private configuration or CI injection when appropriate.
 
 ## D1 Migrations
 
 The D1 schema is sourced from [`migrations/`](../migrations/).
 
 - Initialize the local development database: `npm run db:migrate:local`
-- Apply staging manually: `npm run db:migrate:staging`
-- Apply production manually: `npm run db:migrate:production`
+- Initialize / migrate the remote database: `npm run db:migrate:remote`
 
 When deployment runs through GitHub Actions, pending migrations are applied automatically before the Worker is published.

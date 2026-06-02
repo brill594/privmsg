@@ -5,23 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      environment:
-        description: Cloudflare deployment environment
-        required: true
-        default: production
-        type: choice
-        options:
-          - production
-          - staging
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
-    env:
-      DEPLOY_ENV: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+    environment: production
 
     steps:
       - name: Checkout
@@ -63,8 +52,6 @@ jobs:
           command: >-
             d1 migrations apply DB
             --remote
-            --env
-            ${{ env.DEPLOY_ENV }}
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
@@ -73,8 +60,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
             deploy
-            --env
-            ${{ env.DEPLOY_ENV }}
             --keep-vars
             --var USAGE_LIMIT_D1_ROWS_READ_DAILY:${{ vars.USAGE_LIMIT_D1_ROWS_READ_DAILY }}
             --var USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY:${{ vars.USAGE_LIMIT_D1_ROWS_WRITTEN_DAILY }}
