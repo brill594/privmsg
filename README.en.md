@@ -17,7 +17,7 @@ Related docs:
 - Configurable max access count, currently from `1` to `20`
 - Optional password protection before the server returns decryption authorization
 - All API responses include `Cache-Control: no-store`
-- Supported types: `jpg` `jpeg` `png` `webp` `gif` `mp4` `webm` `mov` `txt` `pdf` `pk8`
+- No specific file format restriction; total attachment size remains capped at `50MB`
 
 ## How It Works
 

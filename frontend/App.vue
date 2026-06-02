@@ -85,6 +85,7 @@ const fileInput = ref(null);
 const readerPrivateKeyInput = ref(null);
 const readerPasswordInput = ref(null);
 const isPreviewExpanded = ref(false);
+const copiedTextTarget = ref("");
 
 const reader = reactive({
   statusMessage: "",
@@ -121,6 +122,7 @@ const readerPasswordPrompt = reactive({
 let enhancedBootstrapPromise = null;
 let pendingPrivateKeyRequest = null;
 let pendingPasswordRequest = null;
+let copyFeedbackTimeoutId = 0;
 
 /* ---------- theme ---------- */
 
@@ -208,12 +210,19 @@ const readerPrivateKeyPromptError = computed(() =>
 const readerPasswordPromptError = computed(() =>
   resolveLocalizedText(readerPasswordPrompt.errorMessage, readerPasswordPrompt.errorRenderer)
 );
+const readerMessageCopyText = computed(() => {
+  if (!reader.loaded) {
+    return "";
+  }
+
+  return resolveLocalizedText(reader.message, reader.messageRenderer) || "";
+});
 const readerMessage = computed(() => {
   if (!reader.loaded) {
     return text.value.reader.waitingBody;
   }
 
-  return resolveLocalizedText(reader.message, reader.messageRenderer) || text.value.reader.emptyBody;
+  return readerMessageCopyText.value || text.value.reader.emptyBody;
 });
 const previewTextContent = computed(() => {
   if (preview.kind !== "text") {
@@ -332,6 +341,7 @@ onBeforeUnmount(() => {
   document.body.style.overflow = "";
   clearPreview();
   cancelReaderPrivateKeyPrompt(true);
+  window.clearTimeout(copyFeedbackTimeoutId);
   cancelReaderPasswordPrompt(true);
 });
 
@@ -512,17 +522,106 @@ async function generateEnhancedKeyPairAndDownload() {
   }
 }
 
-async function copyGeneratedPublicKey() {
-  if (!enhancedBootstrap.generatedPublicKey) {
+const CLIPBOARD_WRITE_TIMEOUT_MS = 800;
+
+function copyTextWithSelection(textToCopy) {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = textToCopy;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "0 auto auto 0";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+
+  document.body.append(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, textToCopy.length);
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function copyTextToClipboard(textToCopy) {
+  if (copyTextWithSelection(textToCopy)) {
+    return true;
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    return false;
+  }
+
+  let timeoutId = 0;
+  try {
+    return await Promise.race([
+      navigator.clipboard.writeText(textToCopy).then(
+        () => true,
+        () => false
+      ),
+      new Promise((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(false), CLIPBOARD_WRITE_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function showCopyFeedback(target) {
+  if (!target) {
     return;
   }
 
-  try {
-    await navigator.clipboard.writeText(enhancedBootstrap.generatedPublicKey);
-    setComposerStatus((currentText) => currentText.composer.enhanced.publicKeyCopied, "success");
-  } catch {
-    setComposerStatus((currentText) => currentText.composer.enhanced.publicKeyCopyFailed, "warning");
+  window.clearTimeout(copyFeedbackTimeoutId);
+  copiedTextTarget.value = target;
+  copyFeedbackTimeoutId = window.setTimeout(() => {
+    if (copiedTextTarget.value === target) {
+      copiedTextTarget.value = "";
+    }
+  }, 1200);
+}
+
+async function copyComposerText(value, successRenderer = (currentText) => currentText.common.copied, failureRenderer = (currentText) => currentText.common.copyFailed, feedbackTarget = "") {
+  const textToCopy = String(value || "");
+  if (!textToCopy) {
+    return;
   }
+
+  if (await copyTextToClipboard(textToCopy)) {
+    showCopyFeedback(feedbackTarget);
+    setComposerStatus(successRenderer, "success");
+  } else {
+    setComposerStatus(failureRenderer, "warning");
+  }
+}
+
+async function copyReaderText(value, feedbackTarget = "") {
+  const textToCopy = String(value || "");
+  if (!textToCopy) {
+    return;
+  }
+
+  if (await copyTextToClipboard(textToCopy)) {
+    showCopyFeedback(feedbackTarget);
+    setReaderStatus((currentText) => currentText.common.copied, "success");
+  } else {
+    setReaderStatus((currentText) => currentText.common.copyFailed, "warning");
+  }
+}
+
+async function copyGeneratedPublicKey() {
+  await copyComposerText(
+    enhancedBootstrap.generatedPublicKey,
+    (currentText) => currentText.composer.enhanced.publicKeyCopied,
+    (currentText) => currentText.composer.enhanced.publicKeyCopyFailed,
+    "public-key"
+  );
 }
 
 async function resolveRecipientPublicKey() {
@@ -1084,16 +1183,12 @@ async function loadMessage() {
 }
 
 async function copyShareLink() {
-  if (!shareLink.value) {
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(shareLink.value);
-    setComposerStatus((currentText) => currentText.composer.copied, "success");
-  } catch {
-    setComposerStatus((currentText) => currentText.composer.copyFailed, "warning");
-  }
+  await copyComposerText(
+    shareLink.value,
+    (currentText) => currentText.composer.copied,
+    (currentText) => currentText.composer.copyFailed,
+    "share-link"
+  );
 }
 
 function downloadBlobFile(blob, fileName) {
@@ -1275,7 +1370,19 @@ function clearPreview() {
           <!-- Message body -->
           <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
             <h2 class="text-base font-semibold text-card-foreground">{{ text.reader.bodyTitle }}</h2>
-            <pre class="min-h-[180px] whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-4 font-mono text-sm leading-relaxed text-foreground">{{ readerMessage }}</pre>
+            <div class="relative">
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+                :disabled="!readerMessageCopyText"
+                @click="copyReaderText(readerMessageCopyText, 'reader-message')"
+              >
+                {{ copiedTextTarget === "reader-message" ? text.common.copiedAction : text.common.copy }}
+              </Button>
+              <pre class="h-48 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ readerMessage }}</pre>
+            </div>
           </div>
 
           <!-- Attachments -->
@@ -1345,9 +1452,19 @@ function clearPreview() {
           </div>
           <div
             v-else-if="preview.kind === 'text'"
-            class="grid min-h-[520px] place-items-start overflow-auto rounded-xl border border-border p-4"
+            class="relative h-[520px] overflow-hidden rounded-xl border border-border"
           >
-            <pre class="m-0 w-full min-h-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+              :disabled="!previewTextContent"
+              @click="copyReaderText(previewTextContent, 'preview-text')"
+            >
+              {{ copiedTextTarget === "preview-text" ? text.common.copiedAction : text.common.copy }}
+            </Button>
+            <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap break-words p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
           </div>
           <button
             v-else-if="preview.kind === 'image'"
@@ -1388,13 +1505,25 @@ function clearPreview() {
                   {{ text.composer.bodyCounter(messageCharacterCount, MAX_MESSAGE_CHARACTERS) }}
                 </span>
               </div>
-              <textarea
-                v-model="composer.message"
-                rows="8"
-                :maxlength="MAX_MESSAGE_CHARACTERS"
-                :placeholder="text.composer.bodyPlaceholder"
-                class="min-h-[190px] w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-              ></textarea>
+              <div class="relative">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+                  :disabled="!composer.message"
+                  @click="copyComposerText(composer.message, undefined, undefined, 'composer-message')"
+                >
+                  {{ copiedTextTarget === "composer-message" ? text.common.copiedAction : text.common.copy }}
+                </Button>
+                <textarea
+                  v-model="composer.message"
+                  rows="8"
+                  :maxlength="MAX_MESSAGE_CHARACTERS"
+                  :placeholder="text.composer.bodyPlaceholder"
+                  class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 pr-24 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                ></textarea>
+              </div>
             </div>
 
             <!-- Field grid -->
@@ -1407,7 +1536,6 @@ function clearPreview() {
                   class="hidden"
                   type="file"
                   multiple
-                  accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.txt,.pdf,.pk8,image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,text/plain,application/pdf,application/pkcs8,application/octet-stream"
                   @change="onFileChange"
                 >
                 <button
@@ -1514,39 +1642,52 @@ function clearPreview() {
 
                   <div class="space-y-3 rounded-xl border border-border bg-card p-4">
                     <div class="space-y-2">
-                      <div class="flex items-center justify-between gap-3">
-                        <label class="text-sm font-semibold text-foreground">
-                          {{ text.composer.enhanced.publicKeyLabel }}
-                        </label>
+                      <label class="text-sm font-semibold text-foreground">
+                        {{ text.composer.enhanced.publicKeyLabel }}
+                      </label>
+                      <div class="relative">
                         <Button
                           variant="secondary"
                           size="sm"
                           type="button"
+                          class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
                           :disabled="!enhancedBootstrap.generatedPublicKey"
                           @click="copyGeneratedPublicKey"
                         >
-                          {{ text.composer.enhanced.copyPublicKey }}
+                          {{ copiedTextTarget === "public-key" ? text.common.copiedAction : text.common.copy }}
                         </Button>
+                        <textarea
+                          :value="enhancedBootstrap.generatedPublicKey"
+                          rows="3"
+                          readonly
+                          :placeholder="text.composer.enhanced.publicKeyPlaceholder"
+                          class="h-24 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3 pr-24 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        ></textarea>
                       </div>
-                      <textarea
-                        :value="enhancedBootstrap.generatedPublicKey"
-                        rows="3"
-                        readonly
-                        :placeholder="text.composer.enhanced.publicKeyPlaceholder"
-                        class="w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                      ></textarea>
                     </div>
 
                     <div class="space-y-2">
                       <label class="text-sm font-semibold text-foreground">
                         {{ text.composer.enhanced.recipientPublicKeyLabel }}
                       </label>
-                      <textarea
-                        v-model="composer.recipientPublicKey"
-                        rows="4"
-                        :placeholder="text.composer.enhanced.recipientPublicKeyPlaceholder"
-                        class="w-full resize-y rounded-lg border border-input bg-transparent px-4 py-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                      ></textarea>
+                      <div class="relative">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          type="button"
+                          class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+                          :disabled="!composer.recipientPublicKey"
+                          @click="copyComposerText(composer.recipientPublicKey, undefined, undefined, 'recipient-public-key')"
+                        >
+                          {{ copiedTextTarget === "recipient-public-key" ? text.common.copiedAction : text.common.copy }}
+                        </Button>
+                        <textarea
+                          v-model="composer.recipientPublicKey"
+                          rows="4"
+                          :placeholder="text.composer.enhanced.recipientPublicKeyPlaceholder"
+                          class="h-28 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3 pr-24 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        ></textarea>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1613,19 +1754,26 @@ function clearPreview() {
           <!-- Share link -->
           <transition name="fade-up">
             <div v-if="shareLink" class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
-              <div class="flex items-center justify-between gap-4">
-                <h2 class="text-base font-semibold text-card-foreground">{{ text.composer.shareTitle }}</h2>
-                <Button variant="secondary" size="sm" type="button" @click="copyShareLink">
-                  {{ text.composer.copyLink }}
+              <h2 class="text-base font-semibold text-card-foreground">{{ text.composer.shareTitle }}</h2>
+              <div class="relative">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+                  :disabled="!shareLink"
+                  @click="copyShareLink"
+                >
+                  {{ copiedTextTarget === "share-link" ? text.common.copiedAction : text.common.copy }}
                 </Button>
+                <textarea
+                  :value="shareLink"
+                  readonly
+                  rows="2"
+                  aria-label="share-link"
+                  class="h-20 w-full resize-none overflow-auto rounded-md border border-input bg-transparent px-3 py-2 pr-24 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                ></textarea>
               </div>
-              <input
-                type="text"
-                :value="shareLink"
-                readonly
-                aria-label="share-link"
-                class="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              >
             </div>
           </transition>
         </div>
@@ -1654,9 +1802,19 @@ function clearPreview() {
               <div class="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
                 <div
                   v-if="preview.kind === 'text'"
-                  class="h-full overflow-auto p-5 sm:p-6"
+                  class="relative h-full overflow-hidden p-5 sm:p-6"
                 >
-                  <pre class="m-0 w-full whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    class="pointer-events-auto absolute right-10 top-7 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
+                    :disabled="!previewTextContent"
+                    @click="copyReaderText(previewTextContent, 'expanded-preview-text')"
+                  >
+                    {{ copiedTextTarget === "expanded-preview-text" ? text.common.copiedAction : text.common.copy }}
+                  </Button>
+                  <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap break-words pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
                 </div>
                 <div
                   v-else-if="preview.kind === 'image'"
@@ -1698,7 +1856,6 @@ function clearPreview() {
                   ref="readerPrivateKeyInput"
                   class="hidden"
                   type="file"
-                  accept=".pk8,application/pkcs8,.der,application/octet-stream"
                   @change="onReaderPrivateKeySelected"
                 >
                 <div class="space-y-2">

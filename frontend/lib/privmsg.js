@@ -5,8 +5,7 @@ import {
   MAX_MESSAGE_CHARACTERS,
   MAX_READ_LIMIT,
   MAX_TOTAL_SIZE_BYTES,
-  clampReadLimit,
-  isAllowedAttachment
+  clampReadLimit
 } from "../../src/shared.js";
 
 const textEncoder = new TextEncoder();
@@ -42,12 +41,6 @@ export function validateDraft(message, files, strings = {}) {
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
   if (totalSize > MAX_TOTAL_SIZE_BYTES) {
     return strings.exceedsSize || "附件总大小不能超过 50MB。";
-  }
-
-  for (const file of files) {
-    if (!isAllowedAttachment(file)) {
-      return strings.unsupportedType ? strings.unsupportedType(file.name) : `不支持的附件类型: ${file.name}`;
-    }
   }
 
   return "";

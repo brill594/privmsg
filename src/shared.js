@@ -11,34 +11,9 @@ export const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{20,64}$/;
 export const ENCRYPTION_MODE_STANDARD = "standard";
 export const ENCRYPTION_MODE_ENHANCED = "enhanced";
 
-export const ALLOWED_EXTENSIONS = new Set([
-  "jpg",
-  "jpeg",
-  "png",
-  "webp",
-  "gif",
-  "mp4",
-  "webm",
-  "mov",
-  "txt",
-  "pdf",
-  "pk8"
-]);
-
-export const ALLOWED_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "video/mp4",
-  "video/webm",
-  "video/quicktime",
-  "text/plain",
-  "application/pdf",
-  "application/pkcs8"
-]);
-
-const OCTET_STREAM_COMPATIBLE_EXTENSIONS = new Set(["pk8"]);
+export function isAllowedAttachment() {
+  return true;
+}
 
 export function getFileExtension(filename) {
   if (typeof filename !== "string") {
@@ -51,17 +26,6 @@ export function getFileExtension(filename) {
   }
 
   return filename.slice(lastDot + 1).toLowerCase();
-}
-
-export function isAllowedAttachment({ name, type = "" }) {
-  const extension = getFileExtension(name);
-  const normalizedType = String(type || "").toLowerCase();
-  const extensionAllowed = ALLOWED_EXTENSIONS.has(extension);
-  const typeAllowed =
-    !normalizedType ||
-    ALLOWED_MIME_TYPES.has(normalizedType) ||
-    (normalizedType === "application/octet-stream" && OCTET_STREAM_COMPATIBLE_EXTENSIONS.has(extension));
-  return extensionAllowed && typeAllowed;
 }
 
 export function getPreviewKind({ name, type = "" }) {

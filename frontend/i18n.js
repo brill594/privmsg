@@ -122,7 +122,6 @@ export const messages = {
         emptyDraft: "至少填写文本或选择一个附件。",
         exceedsMessageLength: (limit) => `文本长度不能超过 ${limit} 字。`,
         exceedsSize: "附件总大小不能超过 50MB。",
-        unsupportedType: (name) => `不支持的附件类型: ${name}`,
         missingAccessPassword: "已填写访问密码，请输入有效密码后重试。",
         accessPasswordMismatch: "两次输入的访问密码不一致。",
         missingRecipientPublicKey: "已启用增强加密，请先填写接收方公钥。",
@@ -194,8 +193,11 @@ export const messages = {
     common: {
       preview: "预览",
       download: "下载",
-      attachmentTypeFallback: "application/octet-stream",
-      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf / pk8"
+      copy: "复制",
+      copiedAction: "已复制",
+      copied: "已复制到剪贴板。",
+      copyFailed: "无法直接复制，请手动复制。",
+      attachmentTypeFallback: "application/octet-stream"
     },
     policy: {
       title: "免责声明与使用守则",
@@ -220,7 +222,7 @@ export const messages = {
         {
           title: "安全边界",
           items: [
-            "附件总大小上限为 50MB，支持类型包括 jpg、png、webp、gif、mp4、webm、mov、txt、pdf、pk8。",
+            "附件总大小上限为 50MB，不限制具体文件格式。",
             "未读失效时间支持 1 小时到 7 天；访问次数支持 1 到 20 次。",
             "只有服务端发放一次解密授权时才会扣减访问次数；普通获取密文不会扣减。",
             "若在次数耗尽前链接被多人持有，多人都可能在额度内完成解密。"
@@ -317,7 +319,6 @@ export const messages = {
         emptyDraft: "Enter a message or select at least one attachment.",
         exceedsMessageLength: (limit) => `Message length must not exceed ${limit} characters.`,
         exceedsSize: "Total attachment size must not exceed 50MB.",
-        unsupportedType: (name) => `Unsupported attachment type: ${name}`,
         missingAccessPassword: "You started configuring an access password. Enter a valid password and try again.",
         accessPasswordMismatch: "The two access-password entries do not match.",
         missingRecipientPublicKey: "Enhanced encryption is enabled. Enter the recipient public key first.",
@@ -390,8 +391,11 @@ export const messages = {
     common: {
       preview: "Preview",
       download: "Download",
-      attachmentTypeFallback: "application/octet-stream",
-      sizeUnitTypes: "jpg / png / webp / gif / mp4 / webm / mov / txt / pdf / pk8"
+      copy: "Copy",
+      copiedAction: "Copied",
+      copied: "Copied to clipboard.",
+      copyFailed: "Clipboard access failed. Please copy manually.",
+      attachmentTypeFallback: "application/octet-stream"
     },
     policy: {
       title: "Disclaimer & Usage Rules",
@@ -416,7 +420,7 @@ export const messages = {
         {
           title: "Security Boundaries",
           items: [
-            "Total attachment size is capped at 50MB. Supported types are jpg, png, webp, gif, mp4, webm, mov, txt, pdf, and pk8.",
+            "Total attachment size is capped at 50MB. Specific file formats are not restricted.",
             "Unread expiration ranges from 1 hour to 7 days. Access count ranges from 1 to 20 reads.",
             "A read is only consumed when the server issues a decryption authorization. Plain ciphertext fetches do not consume reads.",
             "If multiple people hold the link before the read quota is exhausted, multiple recipients may decrypt it within the remaining quota."
