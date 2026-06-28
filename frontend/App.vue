@@ -86,6 +86,7 @@ const readerPrivateKeyInput = ref(null);
 const readerPasswordInput = ref(null);
 const isPreviewExpanded = ref(false);
 const copiedTextTarget = ref("");
+const isDraggingOver = ref(false);
 
 const reader = reactive({
   statusMessage: "",
@@ -390,6 +391,14 @@ function onFileChange(event) {
 
 function openFilePicker() {
   fileInput.value?.click();
+}
+
+function onDropFiles(event) {
+  isDraggingOver.value = false;
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (files.length) {
+    composer.files = files;
+  }
 }
 
 function normalizeMaxReads() {
@@ -1518,7 +1527,14 @@ function clearPreview() {
             <!-- Field grid -->
             <div class="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr]">
               <!-- File picker -->
-              <div class="space-y-2.5">
+              <div
+                class="space-y-2.5 rounded-lg border-2 border-dashed p-2 transition-colors"
+                :class="isDraggingOver ? 'border-ring bg-ring/10' : 'border-transparent'"
+                @dragover.prevent="isDraggingOver = true"
+                @dragenter.prevent="isDraggingOver = true"
+                @dragleave.prevent="isDraggingOver = false"
+                @drop.prevent="onDropFiles"
+              >
                 <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
                 <input
                   ref="fileInput"
@@ -1530,10 +1546,11 @@ function clearPreview() {
                 <button
                   type="button"
                   class="flex h-10 w-full items-center gap-3 rounded-md border border-input bg-transparent px-3 text-left text-sm text-foreground shadow-sm transition-colors hover:bg-muted/30 focus:outline-none focus:ring-1 focus:ring-ring"
+                  :class="{ 'pointer-events-none': isDraggingOver }"
                   @click="openFilePicker"
                 >
-                  <span class="shrink-0 font-medium text-foreground">{{ text.composer.chooseFiles }}</span>
-                  <span class="min-w-0 truncate text-muted-foreground">{{ selectedFileSummary }}</span>
+                  <span class="shrink-0 font-medium text-foreground">{{ isDraggingOver ? text.composer.dropHint : text.composer.chooseFiles }}</span>
+                  <span v-if="!isDraggingOver" class="min-w-0 truncate text-muted-foreground">{{ selectedFileSummary }}</span>
                 </button>
               </div>
 
