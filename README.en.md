@@ -4,6 +4,8 @@
 
 `privmsg` is a one-time message sharing product for sensitive information. Encryption and decryption happen in the browser, while the server stores only ciphertext and the minimum metadata needed to enforce access rules. It is suitable for short text, documents, images, and a small set of attachments, with access limits and optional password protection.
 
+Demo: [privmsg.cc](privmsg.cc)
+
 Related docs:
 
 - Deployment guide (English): [docs/deployment.en.md](./docs/deployment.en.md)
