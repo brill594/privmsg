@@ -1365,7 +1365,7 @@ function clearPreview() {
       <!-- Reader View -->
       <section v-else-if="readerMode" class="grid gap-5 lg:grid-cols-[1.35fr_0.75fr]">
         <!-- Left: reader card -->
-        <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
+        <div class="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
           <h1 class="text-3xl font-bold text-card-foreground">{{ text.reader.title }}</h1>
 
           <!-- Status banner -->
@@ -1389,7 +1389,7 @@ function clearPreview() {
               >
                 {{ copiedTextTarget === "reader-message" ? text.common.copiedAction : text.common.copy }}
               </Button>
-              <pre class="h-48 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ readerMessage }}</pre>
+              <pre class="h-48 w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-muted/50 p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ readerMessage }}</pre>
             </div>
           </div>
 
@@ -1406,8 +1406,8 @@ function clearPreview() {
                 :key="`${attachment.index}-${attachment.name}`"
                 class="flex flex-col items-stretch gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
               >
-                <div>
-                  <p class="font-semibold text-foreground">{{ attachment.name }}</p>
+                <div class="min-w-0">
+                  <p class="wrap-anywhere font-semibold text-foreground">{{ attachment.name }}</p>
                   <p class="text-sm text-muted-foreground">
                     {{ attachment.type || text.common.attachmentTypeFallback }} &middot; {{ formatBytes(attachment.size) }}
                   </p>
@@ -1433,7 +1433,7 @@ function clearPreview() {
         </div>
 
         <!-- Right: preview card -->
-        <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
+        <div class="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
               <h1 class="text-xl font-bold text-card-foreground">{{ text.reader.previewTitle }}</h1>
@@ -1472,7 +1472,7 @@ function clearPreview() {
             >
               {{ copiedTextTarget === "preview-text" ? text.common.copiedAction : text.common.copy }}
             </Button>
-            <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap break-words p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
+            <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap wrap-anywhere p-4 pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
           </div>
           <button
             v-else-if="preview.kind === 'image'"
@@ -1820,7 +1820,7 @@ function clearPreview() {
                   >
                     {{ copiedTextTarget === "expanded-preview-text" ? text.common.copiedAction : text.common.copy }}
                   </Button>
-                  <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap break-words pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
+                  <pre class="m-0 h-full w-full overflow-auto whitespace-pre-wrap wrap-anywhere pr-24 font-mono text-sm leading-relaxed text-foreground">{{ previewTextContent }}</pre>
                 </div>
                 <div
                   v-else-if="preview.kind === 'image'"
