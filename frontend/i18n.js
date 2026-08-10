@@ -131,6 +131,7 @@ export const messages = {
     },
     reader: {
       title: "密文内容",
+      createNew: "发送新的 privmsg",
       previewTitle: "附件预览",
       bodyTitle: "消息正文",
       attachmentsTitle: "已解密附件",
@@ -324,6 +325,7 @@ export const messages = {
     },
     reader: {
       title: "Encrypted Content",
+      createNew: "Send a new privmsg",
       previewTitle: "Attachment Preview",
       bodyTitle: "Message",
       attachmentsTitle: "Decrypted Attachments",

@@ -369,6 +369,10 @@ function switchLocale(nextLocale) {
   locale.value = nextLocale;
 }
 
+function openComposer() {
+  window.location.assign("/");
+}
+
 function openExpandedPreview() {
   if (hasExpandablePreview.value) {
     isPreviewExpanded.value = true;
@@ -391,6 +395,27 @@ function onFileChange(event) {
 
 function openFilePicker() {
   fileInput.value?.click();
+}
+
+function onDragEnterFiles(event) {
+  if (Array.from(event.dataTransfer?.types || []).includes("Files")) {
+    isDraggingOver.value = true;
+  }
+}
+
+function onDragOverFiles(event) {
+  if (!Array.from(event.dataTransfer?.types || []).includes("Files")) {
+    return;
+  }
+
+  isDraggingOver.value = true;
+  event.dataTransfer.dropEffect = "copy";
+}
+
+function onDragLeaveFiles(event) {
+  if (!event.currentTarget.contains(event.relatedTarget)) {
+    isDraggingOver.value = false;
+  }
 }
 
 function onDropFiles(event) {
@@ -1366,7 +1391,12 @@ function clearPreview() {
       <section v-else-if="readerMode" class="grid gap-5 lg:grid-cols-[1.35fr_0.75fr]">
         <!-- Left: reader card -->
         <div class="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
-          <h1 class="text-3xl font-bold text-card-foreground">{{ text.reader.title }}</h1>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h1 class="text-3xl font-bold text-card-foreground">{{ text.reader.title }}</h1>
+            <Button type="button" @click="openComposer">
+              {{ text.reader.createNew }}
+            </Button>
+          </div>
 
           <!-- Status banner -->
           <div
@@ -1505,86 +1535,88 @@ function clearPreview() {
           <h1 class="text-3xl font-bold text-card-foreground">{{ text.composer.title }}</h1>
 
           <form class="space-y-5" @submit.prevent="createMessage">
-            <!-- Message body -->
-            <div class="space-y-2.5">
-              <div class="flex items-center justify-between gap-3">
-                <label class="text-sm font-semibold text-foreground">{{ text.composer.bodyLabel }}</label>
-                <span class="text-xs text-muted-foreground">
-                  {{ text.composer.bodyCounter(messageCharacterCount, MAX_MESSAGE_CHARACTERS) }}
-                </span>
-              </div>
-              <div class="relative">
-                <textarea
-                  v-model="composer.message"
-                  rows="8"
-                  :maxlength="MAX_MESSAGE_CHARACTERS"
-                  :placeholder="text.composer.bodyPlaceholder"
-                  class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                ></textarea>
-              </div>
-            </div>
-
-            <!-- Field grid -->
-            <div class="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr]">
-              <!-- File picker -->
-              <div
-                class="space-y-2.5 rounded-lg border-2 border-dashed p-2 transition-colors"
-                :class="isDraggingOver ? 'border-ring bg-ring/10' : 'border-transparent'"
-                @dragover.prevent="isDraggingOver = true"
-                @dragenter.prevent="isDraggingOver = true"
-                @dragleave.prevent="isDraggingOver = false"
-                @drop.prevent="onDropFiles"
-              >
-                <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
-                <input
-                  ref="fileInput"
-                  class="hidden"
-                  type="file"
-                  multiple
-                  @change="onFileChange"
-                >
-                <button
-                  type="button"
-                  class="flex h-10 w-full items-center gap-3 rounded-md border border-input bg-transparent px-3 text-left text-sm text-foreground shadow-sm transition-colors hover:bg-muted/30 focus:outline-none focus:ring-1 focus:ring-ring"
-                  :class="{ 'pointer-events-none': isDraggingOver }"
-                  @click="openFilePicker"
-                >
-                  <span class="shrink-0 font-medium text-foreground">{{ isDraggingOver ? text.composer.dropHint : text.composer.chooseFiles }}</span>
-                  <span v-if="!isDraggingOver" class="min-w-0 truncate text-muted-foreground">{{ selectedFileSummary }}</span>
-                </button>
-              </div>
-
-              <!-- TTL select -->
+            <div
+              class="space-y-5 rounded-xl border-2 border-dashed p-2 transition-colors"
+              :class="isDraggingOver ? 'border-ring bg-ring/10' : 'border-transparent'"
+              @dragenter.prevent="onDragEnterFiles"
+              @dragover.prevent="onDragOverFiles"
+              @dragleave.prevent="onDragLeaveFiles"
+              @drop.prevent="onDropFiles"
+            >
+              <!-- Message body -->
               <div class="space-y-2.5">
-                <label class="text-sm font-semibold text-foreground">{{ text.composer.expiresLabel }}</label>
-                <select
-                  v-model="composer.ttlSeconds"
-                  class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option
-                    v-for="option in ttlOptions"
-                    :key="option.value"
-                    :value="option.value"
-                    class="bg-card text-card-foreground"
+                <div class="flex items-center justify-between gap-3">
+                  <label class="text-sm font-semibold text-foreground">{{ text.composer.bodyLabel }}</label>
+                  <span class="text-xs text-muted-foreground">
+                    {{ text.composer.bodyCounter(messageCharacterCount, MAX_MESSAGE_CHARACTERS) }}
+                  </span>
+                </div>
+                <div class="relative">
+                  <textarea
+                    v-model="composer.message"
+                    rows="8"
+                    :maxlength="MAX_MESSAGE_CHARACTERS"
+                    :placeholder="text.composer.bodyPlaceholder"
+                    class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  ></textarea>
+                </div>
+              </div>
+
+              <!-- Field grid -->
+              <div class="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr]">
+                <!-- File picker -->
+                <div class="space-y-2.5 p-2">
+                  <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
+                  <input
+                    ref="fileInput"
+                    class="hidden"
+                    type="file"
+                    multiple
+                    @change="onFileChange"
                   >
-                    {{ option.label }}
-                  </option>
-                </select>
-              </div>
+                  <button
+                    type="button"
+                    class="flex h-10 w-full items-center gap-3 rounded-md border border-input bg-transparent px-3 text-left text-sm text-foreground shadow-sm transition-colors hover:bg-muted/30 focus:outline-none focus:ring-1 focus:ring-ring"
+                    :class="{ 'pointer-events-none': isDraggingOver }"
+                    @click="openFilePicker"
+                  >
+                    <span class="shrink-0 font-medium text-foreground">{{ isDraggingOver ? text.composer.dropHint : text.composer.chooseFiles }}</span>
+                    <span v-if="!isDraggingOver" class="min-w-0 truncate text-muted-foreground">{{ selectedFileSummary }}</span>
+                  </button>
+                </div>
 
-              <!-- Max reads -->
-              <div class="space-y-2.5">
-                <label class="text-sm font-semibold text-foreground">{{ text.composer.maxReadsLabel }}</label>
-                <input
-                  v-model.number="composer.maxReads"
-                  type="number"
-                  min="1"
-                  :max="MAX_READ_LIMIT"
-                  step="1"
-                  inputmode="numeric"
-                  class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  @blur="normalizeMaxReads"
-                >
+                <!-- TTL select -->
+                <div class="space-y-2.5 p-2">
+                  <label class="text-sm font-semibold text-foreground">{{ text.composer.expiresLabel }}</label>
+                  <select
+                    v-model="composer.ttlSeconds"
+                    class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option
+                      v-for="option in ttlOptions"
+                      :key="option.value"
+                      :value="option.value"
+                      class="bg-card text-card-foreground"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <!-- Max reads -->
+                <div class="space-y-2.5 p-2">
+                  <label class="text-sm font-semibold text-foreground">{{ text.composer.maxReadsLabel }}</label>
+                  <input
+                    v-model.number="composer.maxReads"
+                    type="number"
+                    min="1"
+                    :max="MAX_READ_LIMIT"
+                    step="1"
+                    inputmode="numeric"
+                    class="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    @blur="normalizeMaxReads"
+                  >
+                </div>
               </div>
             </div>
 
