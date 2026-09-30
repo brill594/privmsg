@@ -29,6 +29,39 @@
 3. 生成链接后将其发送给接收者。
 4. 接收者打开链接，在浏览器内完成解密与查看。
 
+## CLI
+
+CLI 在本地加密文本，再把密文上传到 `privmsg`：
+
+```sh
+npx privmsg-cli create "需要分享的内容"
+printf '%s' '需要分享的内容' | npx privmsg-cli create
+```
+
+默认只输出分享链接，便于 agent 调用。使用 `--json` 获取结构化结果，使用 `--base-url` 指向自建实例：
+
+```sh
+privmsg create --expires-in 86400 --max-reads 1 --json "需要分享的内容"
+privmsg create --base-url https://privmsg.example.com "需要分享的内容"
+```
+
+原有的 `--server` 参数继续作为 `--base-url` 的兼容别名。
+
+可以将自部署地址保存为当前用户的默认值，之后无需每次传入地址：
+
+```sh
+privmsg config set base-url https://privmsg.example.com
+privmsg config get base-url
+privmsg create "需要分享的内容"
+privmsg config reset base-url
+```
+
+配置保存在 `~/.config/privmsg/config.json`；设置了 `XDG_CONFIG_HOME` 时使用该目录下的 `privmsg/config.json`。命令行 `--base-url` / `--server` 优先于保存的默认值，重置后恢复为 `https://privmsg.cc`。
+
+CLI 要求 Node.js 22 或更高版本。首版支持文本分享；附件、访问密码和增强 X25519 加密仍通过网页创建。
+
+消息创建接口按 Cloudflare 提供的来源 IP 限制为每分钟 10 次。超限时返回 HTTP `429` 和 `Retry-After: 60`。该计数按 Cloudflare 数据中心执行，属于防滥用保护而非精确计费系统；共享同一出口 IP 的用户会共用额度。
+
 ## 隐私与安全边界
 
 - 平台无法读取消息正文或附件明文

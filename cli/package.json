@@ -1,0 +1,22 @@
+{
+  "name": "privmsg-cli",
+  "version": "0.1.1",
+  "description": "Create encrypted privmsg share links from the command line",
+  "type": "module",
+  "bin": {
+    "privmsg": "bin/privmsg.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

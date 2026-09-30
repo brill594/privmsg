@@ -18,6 +18,11 @@ function createEnv() {
     env: {
       DB: {},
       BUCKET: {},
+      CREATE_RATE_LIMITER: {
+        async limit() {
+          return { success: true };
+        }
+      },
       ASSETS: {
         fetch(request) {
           requests.push(request);
@@ -221,6 +226,11 @@ function createMessageEnv({
         deletedKeys.push(key);
       }
     },
+    CREATE_RATE_LIMITER: {
+      async limit() {
+        return { success: true };
+      }
+    },
     ASSETS: {
       fetch() {
         return new Response("ok", { status: 200 });
@@ -300,6 +310,39 @@ test("serves the create bootstrap resource with a message id and server key shar
   assert.match(body.id, /^[A-Za-z0-9_-]{20,64}$/);
   assert.match(body.serverKeyShare, /^[A-Za-z0-9_-]{43}$/);
   assert.equal(body.bootstrap.version, "access-key-bootstrap-v1");
+});
+
+test("limits message creation attempts to ten per minute for each client IP", async () => {
+  const counts = new Map();
+  const keys = [];
+  const { env } = createEnv();
+  env.CREATE_RATE_LIMITER = {
+    async limit({ key }) {
+      keys.push(key);
+      const count = (counts.get(key) || 0) + 1;
+      counts.set(key, count);
+      return { success: count <= 10 };
+    }
+  };
+
+  let response;
+  for (let attempt = 0; attempt < 11; attempt += 1) {
+    response = await worker.fetch(
+      new Request("https://example.com/api/create", {
+        method: "POST",
+        headers: {
+          "cf-connecting-ip": "203.0.113.10"
+        }
+      }),
+      env,
+      { waitUntil() {} }
+    );
+  }
+
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "60");
+  assert.deepEqual(new Set(keys), new Set(["create:203.0.113.10"]));
+  assert.equal((await response.json()).error, "rate_limit_exceeded");
 });
 
 test("does not leak the server key share from the public message response", async () => {

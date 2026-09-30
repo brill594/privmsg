@@ -18,3 +18,11 @@ database_id = "efb894c9-ebe4-4083-abea-655ed37f22ba"
 binding = "BUCKET"
 bucket_name = "privmsg-payloads-prod"
 preview_bucket_name = "privmsg-payloads-preview"
+
+[[ratelimits]]
+name = "CREATE_RATE_LIMITER"
+namespace_id = "77451201"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60

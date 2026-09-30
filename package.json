@@ -12,6 +12,7 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "build": "node scripts/build-manifest.mjs && vite build",
+    "cli:pack": "npm pack ./cli --dry-run",
     "preview:local": "node scripts/preview-local.mjs",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "deploy": "npm run build && wrangler deploy",

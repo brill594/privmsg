@@ -44,6 +44,7 @@ const BINARY_HEADERS = {
   "X-Content-Type-Options": "nosniff"
 };
 const PASSWORD_PROOF_HEADER = "x-privmsg-password-proof";
+const CREATE_RATE_LIMIT_SECONDS = 60;
 
 const ENHANCED_BOOTSTRAP = {
   version: "x25519-bootstrap-v1",
@@ -121,7 +122,7 @@ export default {
 };
 
 function assertBindings(env) {
-  if (!env.DB || !env.BUCKET || !env.ASSETS) {
+  if (!env.DB || !env.BUCKET || !env.ASSETS || !env.CREATE_RATE_LIMITER) {
     throw new Error("Missing required Cloudflare bindings");
   }
 }
@@ -129,6 +130,11 @@ function assertBindings(env) {
 async function handleCreate(request, env, usage) {
   if (request.method !== "POST") {
     return methodNotAllowed(["POST"]);
+  }
+
+  const rateLimitError = await enforceCreateRateLimit(request, env);
+  if (rateLimitError) {
+    return rateLimitError;
   }
 
   const contentType = request.headers.get("content-type") || "";
@@ -337,6 +343,29 @@ async function handleCreate(request, env, usage) {
       remainingReads: maxReads
     },
     201
+  );
+}
+
+async function enforceCreateRateLimit(request, env) {
+  const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
+  const { success } = await env.CREATE_RATE_LIMITER.limit({ key: `create:${clientIp}` });
+
+  if (success) {
+    return null;
+  }
+
+  const headers = new Headers(JSON_HEADERS);
+  headers.set("Retry-After", String(CREATE_RATE_LIMIT_SECONDS));
+
+  return new Response(
+    JSON.stringify({
+      error: "rate_limit_exceeded",
+      message: "Too many message creation requests"
+    }),
+    {
+      status: 429,
+      headers
+    }
   );
 }
 

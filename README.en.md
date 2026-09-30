@@ -28,6 +28,39 @@ Related docs:
 3. A shareable link is generated.
 4. The recipient opens the link and decrypts the content in the browser.
 
+## CLI
+
+The CLI encrypts text locally before uploading ciphertext to `privmsg`:
+
+```sh
+npx privmsg-cli create "secret text"
+printf '%s' 'secret text' | npx privmsg-cli create
+```
+
+It prints only the share URL by default for agent-friendly use. Pass `--json` for structured output or `--base-url` for a self-hosted deployment:
+
+```sh
+privmsg create --expires-in 86400 --max-reads 1 --json "secret text"
+privmsg create --base-url https://privmsg.example.com "secret text"
+```
+
+The existing `--server` option remains available as an alias for `--base-url`.
+
+Save a self-hosted deployment as your default:
+
+```sh
+privmsg config set base-url https://privmsg.example.com
+privmsg config get base-url
+privmsg create "secret text"
+privmsg config reset base-url
+```
+
+Configuration is stored in `~/.config/privmsg/config.json`, or `$XDG_CONFIG_HOME/privmsg/config.json` when set. `--base-url` / `--server` takes precedence over the saved default. Reset restores `https://privmsg.cc`.
+
+The CLI requires Node.js 22 or newer. The initial version supports text shares; use the web interface for attachments, access passwords, and enhanced X25519 encryption.
+
+Message creation is limited to 10 requests per minute for each source IP using Cloudflare's rate limiting binding. Throttled requests receive HTTP `429` with `Retry-After: 60`. Counters are local to each Cloudflare location and are intended for abuse prevention rather than exact accounting; users behind the same public IP share the limit.
+
 ## Privacy and Security Boundaries
 
 - The platform cannot read message bodies or attachment plaintext
