@@ -57,7 +57,15 @@ privmsg config reset base-url
 
 Configuration is stored in `~/.config/privmsg/config.json`, or `$XDG_CONFIG_HOME/privmsg/config.json` when set. `--base-url` / `--server` takes precedence over the saved default. Reset restores `https://privmsg.cc`.
 
-The CLI requires Node.js 22 or newer. The initial version supports text shares; use the web interface for attachments, access passwords, and enhanced X25519 encryption.
+The CLI requires Node.js 22 or newer and supports text, file-only, and text-with-file shares. Repeat `--file` for multiple attachments, up to 50 MiB (52,428,800 bytes) combined, matching the web limit. File contents and names are encrypted locally; recipients can download or preview supported formats in the web interface. Use the web interface for access passwords and enhanced X25519 encryption.
+
+```sh
+privmsg create --file ./report.pdf
+privmsg create "Related documents" --file ./report.pdf --file ./data.zip
+printf '%s' 'Notes' | privmsg create - --file ./report.pdf
+```
+
+With attachments and no message, the CLI sends a file-only share without waiting for stdin. Use `-` to explicitly read the message from stdin.
 
 Message creation is limited to 10 requests per minute for each source IP using Cloudflare's rate limiting binding. Throttled requests receive HTTP `429` with `Retry-After: 60`. Counters are local to each Cloudflare location and are intended for abuse prevention rather than exact accounting; users behind the same public IP share the limit.
 

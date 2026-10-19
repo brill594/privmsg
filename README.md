@@ -58,7 +58,15 @@ privmsg config reset base-url
 
 配置保存在 `~/.config/privmsg/config.json`；设置了 `XDG_CONFIG_HOME` 时使用该目录下的 `privmsg/config.json`。命令行 `--base-url` / `--server` 优先于保存的默认值，重置后恢复为 `https://privmsg.cc`。
 
-CLI 要求 Node.js 22 或更高版本。首版支持文本分享；附件、访问密码和增强 X25519 加密仍通过网页创建。
+CLI 要求 Node.js 22 或更高版本，支持文本、纯附件及文本加附件分享。重复使用 `--file` 可发送多个文件，总大小上限与网页一致，为 50 MiB（52,428,800 字节）。文件内容和文件名在本地加密，接收方使用网页打开链接即可预览支持的格式或下载。访问密码和增强 X25519 加密仍通过网页创建。
+
+```sh
+privmsg create --file ./report.pdf
+privmsg create "相关资料" --file ./report.pdf --file ./data.zip
+printf '%s' '说明文字' | privmsg create - --file ./report.pdf
+```
+
+指定附件但未指定消息时，只发送附件，不等待标准输入；使用 `-` 显式读取标准输入作为消息。
 
 消息创建接口按 Cloudflare 提供的来源 IP 限制为每分钟 10 次。超限时返回 HTTP `429` 和 `Retry-After: 60`。该计数按 Cloudflare 数据中心执行，属于防滥用保护而非精确计费系统；共享同一出口 IP 的用户会共用额度。
 

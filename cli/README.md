@@ -32,4 +32,26 @@ privmsg config reset base-url
 
 The URL is stored in `~/.config/privmsg/config.json` (or `$XDG_CONFIG_HOME/privmsg/config.json` when set). `--base-url` / `--server` overrides the saved value for a single command. Reset restores `https://privmsg.cc`.
 
-Requires Node.js 22 or newer. The initial CLI supports text shares; use the web interface for attachments, password protection, and enhanced X25519 encryption.
+Send files with repeatable `--file` options:
+
+```sh
+privmsg create --file ./report.pdf
+privmsg create "Related documents" --file ./report.pdf --file ./data.zip
+printf '%s' 'Notes' | privmsg create - --file ./report.pdf
+```
+
+Attachments may total up to 50 MiB (52,428,800 bytes), matching the web interface. Without a message, `--file` creates a file-only share without waiting for stdin; `-` explicitly reads the message from stdin. Files and their names are encrypted locally. Recipients use the existing web interface to preview supported formats or download the original files.
+
+For JavaScript callers, `createShare()` in `privmsg-cli/lib/client.js` accepts `files: File[]` alongside the optional `message`:
+
+```js
+import { createShare } from "privmsg-cli/lib/client.js";
+
+const result = await createShare({
+  message: "Notes",
+  files: [new File(["secret text"], "note.txt", { type: "text/plain" })]
+});
+console.log(result.shareUrl);
+```
+
+Requires Node.js 22 or newer. Use the web interface for password protection and enhanced X25519 encryption. Attachments are encrypted and uploaded in memory; this is not a streaming or resumable transfer.
