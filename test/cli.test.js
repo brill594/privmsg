@@ -13,6 +13,27 @@ import { MAX_TOTAL_SIZE_BYTES as WEB_MAX_TOTAL_SIZE_BYTES } from "../src/shared.
 
 const cliPath = fileURLToPath(new URL("../cli/bin/privmsg.js", import.meta.url));
 
+test("rejects vulnerable Node releases before reading input or contacting a server", () => {
+  for (const version of ["20.20.0", "22.22.2", "22.23.3", "23.11.0", "24.22.0", "25.0.0", "26.12.0"]) {
+    const setup = `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} });
+      globalThis.fetch = () => { throw new Error("Network must not be reached"); };`;
+    const result = spawnSync(process.execPath, [
+      "--import", `data:text/javascript,${encodeURIComponent(setup)}`, cliPath, "create", "secret"
+    ], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 1, `${version}: ${result.stderr}`);
+    assert.match(result.stderr, /Upgrade Node\.js/);
+    assert.equal(result.stdout, "");
+  }
+  for (const version of ["22.23.4", "22.24.0", "24.22.1", "24.23.0", "26.12.1", "26.13.0"]) {
+    const setup = `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} });`;
+    const result = spawnSync(process.execPath, [
+      "--import", `data:text/javascript,${encodeURIComponent(setup)}`, cliPath, "--help"
+    ], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, `${version}: ${result.stderr}`);
+    assert.match(result.stdout, /Usage: privmsg/);
+  }
+});
+
 test("persists a user's default deployment, allows temporary overrides, and resets it", async (t) => {
   const configHome = await mkdtemp(join(tmpdir(), "privmsg-config-test-"));
   t.after(() => rm(configHome, { recursive: true, force: true }));

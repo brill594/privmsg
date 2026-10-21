@@ -2,6 +2,8 @@
 
 Create a `privmsg` share from a terminal while keeping encryption on the client.
 
+Requires Node.js 22.23.4+ (22.x), 24.22.1+ (24.x), or 26.12.1+ (26.x). Older releases are rejected before reading input or making requests. These versions include the October 2026 TLS/DNS/Brotli security fixes and updated bundled CA certificates. Keep your browser and OS trust store updated too; custom CA stores need separate maintenance.
+
 ```sh
 npx privmsg-cli create "secret text"
 printf '%s' 'secret text' | npx privmsg-cli create

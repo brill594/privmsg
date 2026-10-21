@@ -57,7 +57,7 @@ privmsg config reset base-url
 
 Configuration is stored in `~/.config/privmsg/config.json`, or `$XDG_CONFIG_HOME/privmsg/config.json` when set. `--base-url` / `--server` takes precedence over the saved default. Reset restores `https://privmsg.cc`.
 
-The CLI requires Node.js 22 or newer and supports text, file-only, and text-with-file shares. Repeat `--file` for multiple attachments, up to 50 MiB (52,428,800 bytes) combined, matching the web limit. File contents and names are encrypted locally; recipients can download or preview supported formats in the web interface. Use the web interface for access passwords and enhanced X25519 encryption.
+The CLI requires a security-patched Node.js release: 22.23.4+ (22.x), 24.22.1+ (24.x), or 26.12.1+ (26.x), and supports text, file-only, and text-with-file shares. Repeat `--file` for multiple attachments, up to 50 MiB (52,428,800 bytes) combined, matching the web limit. File contents and names are encrypted locally; recipients can download or preview supported formats in the web interface. Use the web interface for access passwords and enhanced X25519 encryption.
 
 ```sh
 privmsg create --file ./report.pdf

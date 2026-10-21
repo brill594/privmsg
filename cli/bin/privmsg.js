@@ -29,6 +29,12 @@ With --file, omit message for a file-only share, or use - to read text from stdi
 `;
 
 try {
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  const minimum = { 22: [23, 4], 24: [22, 1], 26: [12, 1] }[major];
+  if (!minimum || minor < minimum[0] || (minor === minimum[0] && patch < minimum[1])) {
+    throw new Error("Upgrade Node.js to 22.23.4+ (22.x), 24.22.1+ (24.x), or 26.12.1+ (26.x) for the October 2026 security fixes");
+  }
+
   if (process.argv[2] === "config") {
     await configure(process.argv.slice(3));
   } else {
