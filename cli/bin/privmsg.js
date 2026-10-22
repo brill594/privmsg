@@ -43,7 +43,7 @@ try {
     if (options.help) {
       process.stdout.write(HELP);
     } else if (options.version) {
-      process.stdout.write("0.2.0\n");
+      process.stdout.write("0.2.1\n");
     } else {
       const files = [];
       let totalSize = 0;
