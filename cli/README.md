@@ -9,6 +9,11 @@ npx privmsg-cli create "secret text"
 printf '%s' 'secret text' | npx privmsg-cli create
 ```
 
+Run `privmsg` without arguments (or with `--help`) to show the current version,
+usage, options, and examples, then exit without reading stdin or creating a share.
+Use `privmsg --version` to print only the version. To share piped text, use
+`printf '%s' 'secret text' | privmsg create`.
+
 The command prints only the share URL by default. Use `--json` for structured output:
 
 ```sh

@@ -13,6 +13,30 @@ import { MAX_TOTAL_SIZE_BYTES as WEB_MAX_TOTAL_SIZE_BYTES } from "../src/shared.
 
 const cliPath = fileURLToPath(new URL("../cli/bin/privmsg.js", import.meta.url));
 
+test("bare invocation and help show package version and examples without reading stdin or creating a share", async () => {
+  const { version } = JSON.parse(await readFile(new URL("../cli/package.json", import.meta.url), "utf8"));
+  const setup = `
+    process.stdin[Symbol.asyncIterator] = () => { throw new Error("Help must not read stdin"); };
+    globalThis.fetch = () => { throw new Error("Help must not create a share"); };
+  `;
+  for (const args of [[], ["--help"], ["-h"], ["create", "--help"], ["--version"], ["-v"]]) {
+    const result = spawnSync(process.execPath, [
+      "--import", `data:text/javascript,${encodeURIComponent(setup)}`, cliPath, ...args
+    ], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    if (args.includes("--version") || args.includes("-v")) {
+      assert.equal(result.stdout, `${version}\n`);
+    } else {
+      assert.ok(result.stdout.startsWith(`privmsg ${version}\n\nUsage: privmsg`));
+      assert.match(result.stdout, /Examples:/);
+      assert.ok(result.stdout.includes('privmsg create "secret text"'));
+      assert.ok(result.stdout.includes("| privmsg create"));
+      assert.ok(result.stdout.includes("privmsg create --file ./report.pdf"));
+    }
+  }
+});
+
 test("rejects vulnerable Node releases before reading input or contacting a server", () => {
   for (const version of ["20.20.0", "22.22.2", "22.23.3", "23.11.0", "24.22.0", "25.0.0", "26.12.0"]) {
     const setup = `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} });

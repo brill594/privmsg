@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { openAsBlob } from "node:fs";
 import { basename } from "node:path";
 
 import { MAX_TOTAL_SIZE_BYTES, createShare } from "../lib/client.js";
 import { getDefaultBaseUrl, resetDefaultBaseUrl, setDefaultBaseUrl } from "../lib/config.js";
 
-const HELP = `Usage: privmsg create [options] [message]
+const HELP = `Usage: privmsg
+       privmsg create [options] [message]
        privmsg config set base-url <url>
        privmsg config get base-url
        privmsg config reset base-url
@@ -24,7 +25,14 @@ Options:
   -h, --help             show this help
   -v, --version          show the CLI version
 
-When message is omitted and no files are given, privmsg reads it from stdin.
+Examples:
+  privmsg create "secret text"
+  printf '%s' 'secret text' | privmsg create
+  privmsg create --file ./report.pdf
+  privmsg config set base-url https://privmsg.example.com
+
+With no arguments, privmsg shows this help and exits.
+For create, when message is omitted and no files are given, privmsg reads stdin.
 With --file, omit message for a file-only share, or use - to read text from stdin.
 `;
 
@@ -40,10 +48,9 @@ try {
   } else {
     const options = parseArgs(process.argv.slice(2));
 
-    if (options.help) {
-      process.stdout.write(HELP);
-    } else if (options.version) {
-      process.stdout.write("0.2.1\n");
+    if (options.help || options.version) {
+      const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+      process.stdout.write(options.help ? `privmsg ${version}\n\n${HELP}` : `${version}\n`);
     } else {
       const files = [];
       let totalSize = 0;
@@ -106,7 +113,7 @@ function parseArgs(args) {
     expiresInSeconds: 86400,
     maxReads: 1,
     json: false,
-    help: false,
+    help: args.length === 0,
     version: false,
     files: [],
     message: null
