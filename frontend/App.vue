@@ -1565,7 +1565,7 @@ function clearPreview() {
               <!-- Field grid -->
               <div class="grid gap-4 lg:grid-cols-[1.2fr_0.7fr_0.7fr]">
                 <!-- File picker -->
-                <div class="space-y-2.5 p-2">
+                <div class="min-w-0 space-y-2.5 py-2">
                   <label class="text-sm font-semibold text-foreground">{{ text.composer.attachmentsLabel }}</label>
                   <input
                     ref="fileInput"
@@ -1586,7 +1586,7 @@ function clearPreview() {
                 </div>
 
                 <!-- TTL select -->
-                <div class="space-y-2.5 p-2">
+                <div class="min-w-0 space-y-2.5 py-2">
                   <label class="text-sm font-semibold text-foreground">{{ text.composer.expiresLabel }}</label>
                   <select
                     v-model="composer.ttlSeconds"
@@ -1604,7 +1604,7 @@ function clearPreview() {
                 </div>
 
                 <!-- Max reads -->
-                <div class="space-y-2.5 p-2">
+                <div class="min-w-0 space-y-2.5 py-2">
                   <label class="text-sm font-semibold text-foreground">{{ text.composer.maxReadsLabel }}</label>
                   <input
                     v-model.number="composer.maxReads"
