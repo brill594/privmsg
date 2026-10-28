@@ -1534,9 +1534,9 @@ function clearPreview() {
         <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
           <h1 class="text-3xl font-bold text-card-foreground">{{ text.composer.title }}</h1>
 
-          <form class="space-y-5" @submit.prevent="createMessage">
+          <form class="space-y-5 px-2.5" @submit.prevent="createMessage">
             <div
-              class="space-y-5 rounded-xl border-2 border-dashed p-2 transition-colors"
+              class="-mx-2.5 space-y-5 rounded-xl border-2 border-dashed p-2 transition-colors"
               :class="isDraggingOver ? 'border-ring bg-ring/10' : 'border-transparent'"
               @dragenter.prevent="onDragEnterFiles"
               @dragover.prevent="onDragOverFiles"
