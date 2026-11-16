@@ -393,6 +393,18 @@ function onFileChange(event) {
   composer.files = Array.from(event.target.files || []);
 }
 
+function onPasteMessage(event) {
+  const files = Array.from(event.clipboardData?.files || []);
+  if (!files.length) {
+    return;
+  }
+
+  composer.files = [...composer.files, ...files];
+  if (!event.clipboardData.getData("text/plain")) {
+    event.preventDefault();
+  }
+}
+
 function openFilePicker() {
   fileInput.value?.click();
 }
@@ -1554,6 +1566,7 @@ function clearPreview() {
                 <div class="relative">
                   <textarea
                     v-model="composer.message"
+                    @paste="onPasteMessage"
                     rows="8"
                     :maxlength="MAX_MESSAGE_CHARACTERS"
                     :placeholder="text.composer.bodyPlaceholder"
