@@ -37,10 +37,14 @@ import {
 } from "./lib/privmsg.js";
 import { detectInitialLocale, messages, persistLocale } from "./i18n.js";
 
+import { Plus, Settings, Trash2 } from "lucide-vue-next";
+
 import Button from "./components/ui/Button.vue";
+import ShareReadyCard from "./components/ShareReadyCard.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 
 const THEME_KEY = "privmsg.theme";
+const SHOW_SHARE_QR_KEY = "privmsg.show-share-qr";
 const ENHANCED_PUBLIC_KEY_KEY = "privmsg.enhanced-public-key";
 const PASSWORD_PROOF_HEADER = "x-privmsg-password-proof";
 
@@ -80,11 +84,15 @@ const enhancedBootstrap = reactive({
 });
 
 const shareLink = ref("");
+const createdShareMeta = ref(null);
 const isCreating = ref(false);
 const fileInput = ref(null);
 const readerPrivateKeyInput = ref(null);
 const readerPasswordInput = ref(null);
 const isPreviewExpanded = ref(false);
+const isSettingsOpen = ref(false);
+const isAttachmentsModalOpen = ref(false);
+const showShareQr = ref(getInitialShowShareQr());
 const copiedTextTarget = ref("");
 const isDraggingOver = ref(false);
 
@@ -135,6 +143,11 @@ function getStoredEnhancedPublicKey() {
   return localStorage.getItem(ENHANCED_PUBLIC_KEY_KEY) || "";
 }
 
+function getInitialShowShareQr() {
+  if (typeof window === "undefined") return true;
+  return localStorage.getItem(SHOW_SHARE_QR_KEY) !== "false";
+}
+
 function getInitialTheme() {
   if (typeof window === "undefined") return true;
   const stored = localStorage.getItem(THEME_KEY);
@@ -169,6 +182,16 @@ const selectedFileSummary = computed(() => {
   return text.value.composer.selectedFiles(composer.files.length, formatBytes(selectedTotalSize.value));
 });
 const composerStatusMessage = computed(() => resolveLocalizedText(composerStatus.message, composerStatus.renderer));
+const createdShareSummary = computed(() => {
+  if (!createdShareMeta.value) {
+    return null;
+  }
+  const matchedTtl = ttlOptions.value.find((option) => option.value === createdShareMeta.value.ttlSeconds);
+  return {
+    ...createdShareMeta.value,
+    ttlLabel: matchedTtl ? matchedTtl.label : `${createdShareMeta.value.ttlSeconds}s`
+  };
+});
 const enhancedBootstrapReady = computed(() => enhancedBootstrap.status === "ready");
 const enhancedBootstrapProgressPercent = computed(() => {
   if (!enhancedBootstrap.totalBytes) {
@@ -310,6 +333,12 @@ watch(isPreviewExpanded, (expanded) => {
   }
 });
 
+watch(showShareQr, (enabled) => {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(SHOW_SHARE_QR_KEY, enabled ? "true" : "false");
+  }
+});
+
 watch(
   () => composer.encryptionMode,
   (mode) => {
@@ -384,13 +413,25 @@ function closeExpandedPreview() {
 }
 
 function handleWindowKeydown(event) {
+  if (event.key === "Escape" && isAttachmentsModalOpen.value) {
+    isAttachmentsModalOpen.value = false;
+    return;
+  }
+  if (event.key === "Escape" && isSettingsOpen.value) {
+    isSettingsOpen.value = false;
+    return;
+  }
   if (event.key === "Escape" && isPreviewExpanded.value) {
     closeExpandedPreview();
   }
 }
 
 function onFileChange(event) {
-  composer.files = Array.from(event.target.files || []);
+  const selected = Array.from(event.target.files || []);
+  if (selected.length) {
+    composer.files = [...composer.files, ...selected];
+  }
+  event.target.value = "";
 }
 
 function onPasteMessage(event) {
@@ -405,8 +446,27 @@ function onPasteMessage(event) {
   }
 }
 
-function openFilePicker() {
+function triggerAddFiles() {
   fileInput.value?.click();
+}
+
+function openFilePicker() {
+  if (composer.files.length > 0) {
+    isAttachmentsModalOpen.value = true;
+    return;
+  }
+  triggerAddFiles();
+}
+
+function removeComposerFile(index) {
+  composer.files = composer.files.filter((_, currentIndex) => currentIndex !== index);
+}
+
+function clearComposerFiles() {
+  composer.files = [];
+  if (fileInput.value) {
+    fileInput.value.value = "";
+  }
 }
 
 function onDragEnterFiles(event) {
@@ -887,6 +947,7 @@ async function createMessage() {
 
   isCreating.value = true;
   shareLink.value = "";
+  createdShareMeta.value = null;
 
   try {
     setComposerStatus((currentText) => currentText.composer.requestingServerKey);
@@ -1019,6 +1080,15 @@ async function createMessage() {
       throw createLocalizedError((currentText) => currentText.composer.errors.createFailed);
     }
 
+    createdShareMeta.value = {
+      maxReads,
+      ttlSeconds: Number(composer.ttlSeconds),
+      hasPassword: Boolean(passwordProtection),
+      encryptionMode,
+      hasText: composer.message.length > 0,
+      fileCount: totalFiles,
+      totalSizeText: formatBytes(totalSize)
+    };
     shareLink.value = `${window.location.origin}/m/${messageId}#${localKeyShare}`;
     composer.accessPassword = "";
     composer.accessPasswordConfirmation = "";
@@ -1234,6 +1304,24 @@ async function copyShareLink() {
     (currentText) => currentText.composer.copyFailed,
     "share-link"
   );
+}
+
+function resetComposerForNewMessage() {
+  shareLink.value = "";
+  createdShareMeta.value = null;
+  isAttachmentsModalOpen.value = false;
+  composer.message = "";
+  composer.files = [];
+  composer.accessPassword = "";
+  composer.accessPasswordConfirmation = "";
+  copiedTextTarget.value = "";
+  if (fileInput.value) {
+    fileInput.value.value = "";
+  }
+  setComposerStatus((currentText) => currentText.composer.initialStatus, "progress");
+  if (typeof window !== "undefined") {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 }
 
 function downloadBlobFile(blob, fileName) {
@@ -1541,6 +1629,23 @@ function clearPreview() {
         </div>
       </section>
 
+      <!-- Share Ready View (post-send) -->
+      <section v-else-if="shareLink && createdShareSummary" class="mx-auto max-w-3xl">
+        <transition name="fade-up" appear>
+          <ShareReadyCard
+            :share-link="shareLink"
+            :summary="createdShareSummary"
+            :status-message="composerStatusMessage"
+            :status-class="toneClasses(composerStatus.tone)"
+            :copied="copiedTextTarget === 'share-link'"
+            :show-qr="showShareQr"
+            :text="text"
+            @copy-link="copyShareLink"
+            @send-new="resetComposerForNewMessage"
+          />
+        </transition>
+      </section>
+
       <!-- Composer View -->
       <section v-else class="mx-auto max-w-3xl">
         <div class="space-y-5 rounded-2xl border border-border bg-card p-7 shadow-lg">
@@ -1569,7 +1674,6 @@ function clearPreview() {
                     @paste="onPasteMessage"
                     rows="8"
                     :maxlength="MAX_MESSAGE_CHARACTERS"
-                    :placeholder="text.composer.bodyPlaceholder"
                     class="h-48 w-full resize-none overflow-auto rounded-lg border border-input bg-transparent px-4 py-3.5 text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                   ></textarea>
                 </div>
@@ -1747,12 +1851,7 @@ function clearPreview() {
 
             <!-- Optional password gate -->
             <div class="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
-              <div class="space-y-1">
-                <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.passwordProtectionTitle }}</p>
-                <p class="m-0 text-sm leading-relaxed text-muted-foreground">
-                  {{ text.composer.passwordProtectionHint }}
-                </p>
-              </div>
+              <p class="m-0 text-sm font-semibold text-foreground">{{ text.composer.passwordProtectionTitle }}</p>
 
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-2">
@@ -1801,32 +1900,6 @@ function clearPreview() {
               {{ isCreating ? text.composer.creating : text.composer.create }}
             </Button>
           </form>
-
-          <!-- Share link -->
-          <transition name="fade-up">
-            <div v-if="shareLink" class="space-y-4 rounded-xl border border-border bg-muted/30 p-5">
-              <h2 class="text-base font-semibold text-card-foreground">{{ text.composer.shareTitle }}</h2>
-              <div class="relative">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  type="button"
-                  class="pointer-events-auto absolute right-5 top-2 z-10 h-7 min-w-[3.75rem] bg-secondary/95 px-2 text-[11px] shadow-sm transition duration-100 active:scale-95"
-                  :disabled="!shareLink"
-                  @click="copyShareLink"
-                >
-                  {{ copiedTextTarget === "share-link" ? text.common.copiedAction : text.common.copy }}
-                </Button>
-                <textarea
-                  :value="shareLink"
-                  readonly
-                  rows="2"
-                  aria-label="share-link"
-                  class="h-20 w-full resize-none overflow-auto rounded-md border border-input bg-transparent px-3 py-2 pr-24 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                ></textarea>
-              </div>
-            </div>
-          </transition>
         </div>
       </section>
 
@@ -1998,6 +2071,117 @@ function clearPreview() {
         </transition>
       </teleport>
 
+      <teleport to="body">
+        <transition name="fade-up">
+          <div
+            v-if="isAttachmentsModalOpen"
+            class="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            @click.self="isAttachmentsModalOpen = false"
+          >
+            <div class="flex h-full items-center justify-center p-4 sm:p-6">
+              <div class="w-full max-w-lg space-y-5 rounded-2xl border border-border bg-card p-6 shadow-2xl">
+                <div class="flex items-center justify-between gap-3">
+                  <h2 class="text-lg font-semibold text-card-foreground">{{ text.composer.attachmentsModal.title }}</h2>
+                  <span class="text-xs text-muted-foreground">{{ selectedFileSummary }}</span>
+                </div>
+
+                <div v-if="composer.files.length" class="max-h-72 space-y-2.5 overflow-auto pr-1">
+                  <div
+                    v-for="(file, index) in composer.files"
+                    :key="`${index}-${file.name}-${file.size}-${file.lastModified}`"
+                    class="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 px-3.5 py-2.5"
+                  >
+                    <div class="min-w-0">
+                      <p class="m-0 truncate text-sm font-medium text-foreground">{{ file.name }}</p>
+                      <p class="m-0 text-xs text-muted-foreground">{{ formatBytes(file.size) }}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      type="button"
+                      :aria-label="text.composer.attachmentsModal.removeFile"
+                      :title="text.composer.attachmentsModal.removeFile"
+                      class="shrink-0 text-muted-foreground hover:text-destructive"
+                      @click="removeComposerFile(index)"
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div
+                  v-else
+                  class="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground"
+                >
+                  {{ text.composer.attachmentsModal.empty }}
+                </div>
+
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <Button
+                    v-if="composer.files.length"
+                    variant="outline"
+                    type="button"
+                    @click="clearComposerFiles"
+                  >
+                    {{ text.composer.attachmentsModal.clearAll }}
+                  </Button>
+                  <span v-else></span>
+
+                  <div class="flex flex-wrap gap-2">
+                    <Button variant="secondary" type="button" @click="triggerAddFiles">
+                      <Plus class="h-4 w-4" />
+                      {{ text.composer.attachmentsModal.addFiles }}
+                    </Button>
+                    <Button type="button" @click="isAttachmentsModalOpen = false">
+                      {{ text.composer.attachmentsModal.done }}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </transition>
+      </teleport>
+
+      <teleport to="body">
+        <transition name="fade-up">
+          <div
+            v-if="isSettingsOpen"
+            class="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            @click.self="isSettingsOpen = false"
+          >
+            <div class="flex h-full items-center justify-center p-4 sm:p-6">
+              <div class="w-full max-w-md space-y-5 rounded-2xl border border-border bg-card p-6 shadow-2xl">
+                <h2 class="text-lg font-semibold text-card-foreground">{{ text.settings.title }}</h2>
+
+                <label class="flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-border bg-muted/30 p-4">
+                  <div class="space-y-1">
+                    <p class="m-0 text-sm font-semibold text-foreground">{{ text.settings.showShareQrLabel }}</p>
+                    <p class="m-0 text-xs leading-relaxed text-muted-foreground">
+                      {{ text.settings.showShareQrHint }}
+                    </p>
+                  </div>
+                  <input
+                    v-model="showShareQr"
+                    type="checkbox"
+                    class="mt-1 h-4 w-4 shrink-0 rounded border-input text-primary focus:ring-ring"
+                  >
+                </label>
+
+                <div class="flex justify-end">
+                  <Button type="button" @click="isSettingsOpen = false">
+                    {{ text.settings.close }}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </transition>
+      </teleport>
+
       <!-- Footer -->
       <footer class="mt-6 flex flex-wrap justify-center gap-3">
         <a
@@ -2006,6 +2190,14 @@ function clearPreview() {
         >
           {{ footerLabel }}
         </a>
+        <button
+          type="button"
+          class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          @click="isSettingsOpen = true"
+        >
+          <Settings class="h-4 w-4" />
+          {{ text.footer.settings }}
+        </button>
         <a
           href="https://github.com/brill594/privmsg"
           target="_blank"

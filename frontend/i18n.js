@@ -45,7 +45,14 @@ export const messages = {
     },
     footer: {
       legal: "免责声明与使用守则",
-      home: "返回主页"
+      home: "返回主页",
+      settings: "设置"
+    },
+    settings: {
+      title: "设置",
+      showShareQrLabel: "分享页显示二维码",
+      showShareQrHint: "发送消息后，在链接分享页展示本地生成的二维码，方便手机扫码打开。",
+      close: "完成"
     },
     ttlOptions: [
       { label: "1 小时", value: 3600 },
@@ -59,7 +66,6 @@ export const messages = {
     composer: {
       title: "创建私密消息",
       bodyLabel: "文本内容",
-      bodyPlaceholder: "输入要加密的消息内容，可留空，仅发送附件。",
       bodyCounter: (count, limit) => `${count} / ${limit} 字`,
       attachmentsLabel: "附件",
       chooseFiles: "选择文件",
@@ -70,6 +76,16 @@ export const messages = {
       create: "本地加密并生成分享链接",
       creating: "正在创建中…",
       shareTitle: "分享链接",
+      shareView: {
+        title: "链接已生成",
+        sendNew: "发送新消息",
+        copyLink: "复制链接",
+        copiedLink: "已复制链接",
+        openLink: "打开链接",
+        qrTitle: "扫码打开链接",
+        passwordProtected: "已设访问密码",
+        enhancedEncryption: "X25519 增强加密"
+      },
       initialStatus: "输入文本或附件后，浏览器会先完成本地加密，再上传密文。",
       requestingServerKey: "正在向服务端申请本次加密所需的密钥 share…",
       encryptMessage: "正在本地加密消息正文…",
@@ -80,8 +96,15 @@ export const messages = {
       copyFailed: "无法直接访问剪贴板，请手动复制链接。",
       noFiles: "尚未选择附件。",
       selectedFiles: (count, size) => `已选择 ${count} 个附件，总计 ${size}。`,
+      attachmentsModal: {
+        title: "管理附件",
+        addFiles: "添加文件",
+        clearAll: "清空全部",
+        removeFile: "移除",
+        done: "完成",
+        empty: "暂无附件，点击下方「添加文件」选择。"
+      },
       passwordProtectionTitle: "访问密码（可选）",
-      passwordProtectionHint: "设置后，接收方必须先输入此密码，服务端才会返回消息密文、附件密文和解密授权。",
       accessPasswordLabel: "访问密码",
       accessPasswordPlaceholder: "留空则不启用额外密码门槛",
       accessPasswordConfirmationLabel: "确认访问密码",
@@ -237,7 +260,14 @@ export const messages = {
     },
     footer: {
       legal: "Disclaimer & Usage Rules",
-      home: "Back to Home"
+      home: "Back to Home",
+      settings: "Settings"
+    },
+    settings: {
+      title: "Settings",
+      showShareQrLabel: "Show QR code on share page",
+      showShareQrHint: "Display a locally generated QR code next to the share link after creating a message.",
+      close: "Done"
     },
     ttlOptions: [
       { label: "1 hour", value: 3600 },
@@ -251,7 +281,6 @@ export const messages = {
     composer: {
       title: "Create Private Message",
       bodyLabel: "Message",
-      bodyPlaceholder: "Type the message to encrypt. You can leave this empty and send attachments only.",
       bodyCounter: (count, limit) => `${count} / ${limit} chars`,
       attachmentsLabel: "Attachments",
       chooseFiles: "Choose files",
@@ -262,6 +291,16 @@ export const messages = {
       create: "Encrypt locally and generate link",
       creating: "Creating…",
       shareTitle: "Share link",
+      shareView: {
+        title: "Link Ready",
+        sendNew: "Send new message",
+        copyLink: "Copy link",
+        copiedLink: "Link copied",
+        openLink: "Open link",
+        qrTitle: "Scan to open",
+        passwordProtected: "Password protected",
+        enhancedEncryption: "Enhanced X25519"
+      },
       initialStatus: "Your browser encrypts the message locally before any ciphertext is uploaded.",
       requestingServerKey: "Requesting the server-side key share for this message…",
       encryptMessage: "Encrypting message locally…",
@@ -273,9 +312,15 @@ export const messages = {
       copyFailed: "Clipboard access failed. Please copy the link manually.",
       noFiles: "No attachment selected.",
       selectedFiles: (count, size) => `${count} attachment(s) selected, total ${size}.`,
+      attachmentsModal: {
+        title: "Manage Attachments",
+        addFiles: "Add files",
+        clearAll: "Clear all",
+        removeFile: "Remove",
+        done: "Done",
+        empty: "No attachments yet. Click \"Add files\" below to select."
+      },
       passwordProtectionTitle: "Access password (optional)",
-      passwordProtectionHint:
-        "When set, the recipient must enter this password before the server returns the message ciphertext, attachment ciphertext, and decryption authorization.",
       accessPasswordLabel: "Access password",
       accessPasswordPlaceholder: "Leave blank to disable the extra password gate",
       accessPasswordConfirmationLabel: "Confirm access password",
