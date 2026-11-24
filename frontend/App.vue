@@ -2183,26 +2183,26 @@ function clearPreview() {
       </teleport>
 
       <!-- Footer -->
-      <footer class="mt-6 flex flex-wrap justify-center gap-3">
+      <footer class="mt-6 flex flex-nowrap items-center justify-center gap-2 sm:gap-3">
         <a
           :href="footerHref"
-          class="rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
+          class="min-w-0 truncate whitespace-nowrap rounded-full border border-border bg-secondary/50 px-3 py-2 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground sm:px-4 sm:py-2.5 sm:text-sm"
         >
           {{ footerLabel }}
         </a>
         <button
           type="button"
-          class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-secondary/50 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:px-4 sm:py-2.5 sm:text-sm"
           @click="isSettingsOpen = true"
         >
-          <Settings class="h-4 w-4" />
+          <Settings class="h-3.5 w-3.5 sm:h-4 sm:w-4" />
           {{ text.footer.settings }}
         </button>
         <a
           href="https://github.com/brill594/privmsg"
           target="_blank"
           rel="noreferrer noopener"
-          class="rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground"
+          class="shrink-0 whitespace-nowrap rounded-full border border-border bg-secondary/50 px-3 py-2 text-xs font-medium text-muted-foreground no-underline transition-colors hover:bg-accent hover:text-foreground sm:px-4 sm:py-2.5 sm:text-sm"
         >
           GitHub
         </a>
